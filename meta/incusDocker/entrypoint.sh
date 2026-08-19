@@ -97,22 +97,29 @@ else
     if incus admin init --preseed < /incus_admin_config.yaml; then
         touch "$INIT_MARKER"
         echo "Preseed completed successfully."
-        
-        # Import the prebuilt k8s VM image (baked into the image at /incus-images)
-        if [ -f /incus-images/incus.tar.xz ] && [ -f /incus-images/disk.qcow2 ]; then
-            echo "Importing k8s VM image (alias 'k8s')..."
-            if incus image import /incus-images/incus.tar.xz /incus-images/disk.qcow2 --alias k8s; then
-                echo "Imported VM image with alias 'k8s'."
-            else
-                echo "WARNING: Failed to import VM image. You can import it manually:"
-                echo "  incus image import /incus-images/incus.tar.xz /incus-images/disk.qcow2 --alias k8s"
-            fi
-        else
-            echo "VM image files not found in image — skipping import."
-        fi
     else
         echo "Preseed failed — will retry on next start."
     fi
+fi
+
+# Import the prebuilt k8s VM image (baked into the image at /incus-images),
+# if it isn't already present. Checked independently of the preseed marker
+# above — not folded into that one-time block — so a failed import (disk
+# full, corrupt data, an I/O hiccup) is retried on every subsequent start
+# instead of being silently skipped forever just because the marker above
+# already exists from a prior successful preseed.
+if incus image alias list -c a --format csv 2>/dev/null | grep -qx k8s; then
+    echo "k8s VM image already imported — skipping."
+elif [ -f /incus-images/incus.tar.xz ] && [ -f /incus-images/disk.qcow2 ]; then
+    echo "Importing k8s VM image (alias 'k8s')..."
+    if incus image import /incus-images/incus.tar.xz /incus-images/disk.qcow2 --alias k8s; then
+        echo "Imported VM image with alias 'k8s'."
+    else
+        echo "WARNING: Failed to import VM image — will retry on next start. You can also import it manually:"
+        echo "  incus image import /incus-images/incus.tar.xz /incus-images/disk.qcow2 --alias k8s"
+    fi
+else
+    echo "VM image files not found in image — skipping import."
 fi
 
 # Keep the container alive
