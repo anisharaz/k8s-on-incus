@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -15,6 +16,12 @@ import (
 // need to pull control-plane images on first run, and a master additionally
 // downloads the Cilium CLI and pulls Cilium's own images during CNI install.
 const nodeProvisionTimeout = 20 * time.Minute
+
+// nodeDeleteVMTimeout bounds the best-effort VM cleanup failNodeJob performs
+// after a provisioning failure — just a VM stop+delete, not a full
+// drain/reset/teardown sequence, so it needs far less time than
+// nodeDeleteTimeout (delete.go).
+const nodeDeleteVMTimeout = 2 * time.Minute
 
 // nodeImageAlias is the only VM image currently available: a prebaked
 // Ubuntu + Kubernetes image (see meta/incusDocker).
@@ -72,7 +79,7 @@ func (m *Manager) CreateNodeJob(ownerID, nodeID, incusName, networkIncusName, ro
 	}
 
 	go func() {
-		defer recoverJobPanic(func(err error) { m.failNodeJob(job.ID, nodeID, err) })
+		defer recoverJobPanic(func(err error) { m.failNodeJob(job.ID, nodeID, incusName, err) })
 		m.runNodeJob(job.ID, nodeID, incusName, networkIncusName, role, masterIncusName, cni, size)
 	}()
 
@@ -100,7 +107,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 	})
 
 	if err := m.incus.Launch(ctx, incusName, nodeImageAlias, networkIncusName, size.CPU, size.Memory, size.Disk, true); err != nil {
-		m.failNodeJob(jobID, nodeID, err)
+		m.failNodeJob(jobID, nodeID, incusName, err)
 		return
 	}
 
@@ -112,7 +119,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 
 	ip, err := m.incus.WaitForIPv4(ctx, incusName)
 	if err != nil {
-		m.failNodeJob(jobID, nodeID, err)
+		m.failNodeJob(jobID, nodeID, incusName, err)
 		return
 	}
 	m.updateNode(nodeID, map[string]any{"ip": ip})
@@ -124,7 +131,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 	})
 
 	if err := m.incus.WaitForAgent(ctx, incusName); err != nil {
-		m.failNodeJob(jobID, nodeID, err)
+		m.failNodeJob(jobID, nodeID, incusName, err)
 		return
 	}
 
@@ -138,7 +145,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 	// (both come up during boot), and kubeadm requires a working CRI
 	// socket for both init and join, so wait for it explicitly.
 	if err := m.waitForContainerd(ctx, incusName); err != nil {
-		m.failNodeJob(jobID, nodeID, err)
+		m.failNodeJob(jobID, nodeID, incusName, err)
 		return
 	}
 
@@ -154,7 +161,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 		m.updateNode(nodeID, map[string]any{"message": "Running kubeadm init"})
 
 		if _, err := m.incus.Run(ctx, incusName, []string{"kubeadm", "init"}); err != nil {
-			m.failNodeJob(jobID, nodeID, err)
+			m.failNodeJob(jobID, nodeID, incusName, err)
 			return
 		}
 
@@ -169,7 +176,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 			rootKubeDir, rootKubeconfigPath,
 		)}
 		if _, err := m.incus.Run(ctx, incusName, copyKubeconfig); err != nil {
-			m.failNodeJob(jobID, nodeID, err)
+			m.failNodeJob(jobID, nodeID, incusName, err)
 			return
 		}
 
@@ -180,7 +187,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 		})
 
 		if err := m.waitForClusterHealthy(ctx, incusName); err != nil {
-			m.failNodeJob(jobID, nodeID, err)
+			m.failNodeJob(jobID, nodeID, incusName, err)
 			return
 		}
 
@@ -192,7 +199,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 		m.updateNode(nodeID, map[string]any{"message": "Installing CNI"})
 
 		if err := installCNI(ctx, m, incusName, cni); err != nil {
-			m.failNodeJob(jobID, nodeID, err)
+			m.failNodeJob(jobID, nodeID, incusName, err)
 			return
 		}
 
@@ -210,7 +217,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 		// by the time a worker is added.
 		joinCmd, err := m.incus.Run(ctx, masterIncusName, []string{"kubeadm", "token", "create", "--print-join-command"})
 		if err != nil {
-			m.failNodeJob(jobID, nodeID, err)
+			m.failNodeJob(jobID, nodeID, incusName, err)
 			return
 		}
 
@@ -220,7 +227,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 		m.updateNode(nodeID, map[string]any{"message": "Running kubeadm join"})
 
 		if _, err := m.incus.Run(ctx, incusName, []string{"bash", "-c", strings.TrimSpace(joinCmd.Stdout)}); err != nil {
-			m.failNodeJob(jobID, nodeID, err)
+			m.failNodeJob(jobID, nodeID, incusName, err)
 			return
 		}
 
@@ -231,7 +238,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 		})
 
 		if err := m.waitForNodeRegistered(ctx, masterIncusName, incusName); err != nil {
-			m.failNodeJob(jobID, nodeID, err)
+			m.failNodeJob(jobID, nodeID, incusName, err)
 			return
 		}
 
@@ -308,11 +315,8 @@ func (m *Manager) waitForNodeRegistered(ctx context.Context, masterIncusName, no
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
-	checkCmd := []string{"kubectl", "--kubeconfig=" + rootKubeconfigPath, "get", "node", nodeIncusName}
-
 	for {
-		result, err := m.incus.Exec(ctx, masterIncusName, checkCmd, nil)
-		if err == nil && result.ExitCode == 0 {
+		if m.isNodeRegistered(ctx, masterIncusName, nodeIncusName) {
 			return nil
 		}
 
@@ -325,8 +329,21 @@ func (m *Manager) waitForNodeRegistered(ctx context.Context, masterIncusName, no
 }
 
 // failNodeJob marks the job and node as failed, and fails the cluster too
-// if this was its master node.
-func (m *Manager) failNodeJob(jobID, nodeID string, runErr error) {
+// if this was its master node. Also best-effort deletes the VM: Launch
+// happens in the very first step, so almost every later failure (IP wait,
+// agent wait, kubeadm init/join, CNI install) leaves a VM running that
+// nothing else will ever clean up — there's no retry path for a failed
+// node, only deletion, and deletion is idempotent (a no-op if Launch itself
+// never got far enough to create anything). Delete uses its own context,
+// not the job's, since the job's timeout may already be exceeded by the
+// time a failure is being handled.
+func (m *Manager) failNodeJob(jobID, nodeID, incusName string, runErr error) {
+	deleteCtx, cancel := context.WithTimeout(context.Background(), nodeDeleteVMTimeout)
+	defer cancel()
+	if err := m.incus.Delete(deleteCtx, incusName); err != nil {
+		log.Printf("job %s: failed to clean up VM %q after provisioning failure: %v", jobID, incusName, err)
+	}
+
 	completedAt := time.Now().UTC()
 	m.updateJob(jobID, func(job *models.Job) {
 		job.Status = models.JobStatusFailed

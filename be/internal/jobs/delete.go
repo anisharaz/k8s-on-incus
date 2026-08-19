@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/anisharaz/incus-k8s-manager/be/internal/models"
@@ -58,31 +59,57 @@ func (m *Manager) runNodeDeleteJob(jobID, nodeID, incusName, masterIncusName str
 
 	m.updateJob(jobID, func(job *models.Job) {
 		job.Status = models.JobStatusRunning
-		job.Stage = "draining"
-		job.Progress = 15
-		job.Message = "Draining node..."
-	})
-	m.updateNode(nodeID, map[string]any{"message": "Draining node"})
-
-	drainCmd := []string{
-		"kubectl", "--kubeconfig=" + rootKubeconfigPath, "drain", incusName,
-		"--ignore-daemonsets", "--delete-emptydir-data", "--force", "--timeout=60s",
-	}
-	if _, err := m.incus.Run(ctx, masterIncusName, drainCmd); err != nil {
-		m.failNodeDeleteJob(jobID, nodeID, err)
-		return
-	}
-
-	m.updateJob(jobID, func(job *models.Job) {
-		job.Stage = "removing-node-object"
-		job.Progress = 45
-		job.Message = "Removing node from the cluster..."
+		job.Stage = "checking-registration"
+		job.Progress = 10
+		job.Message = "Checking whether the node ever joined the cluster..."
 	})
 
-	deleteNodeCmd := []string{"kubectl", "--kubeconfig=" + rootKubeconfigPath, "delete", "node", incusName}
-	if _, err := m.incus.Run(ctx, masterIncusName, deleteNodeCmd); err != nil {
-		m.failNodeDeleteJob(jobID, nodeID, err)
-		return
+	// A worker whose provisioning failed before (or during) `kubeadm join`
+	// never registered with the API server — draining it or removing its
+	// Node object is both meaningless and guaranteed to fail ("node not
+	// found"), which used to abort deletion before it ever reached VM
+	// teardown below, permanently orphaning the VM (it's undeletable any
+	// other way: the only path to delete a worker is this same job). Skip
+	// straight to best-effort cleanup for a node that never actually
+	// joined; keep the normal graceful drain-then-remove path (fatal on
+	// failure, as before) for a node that's genuinely part of the cluster
+	// and may be running real workloads.
+	registered := m.isNodeRegistered(ctx, masterIncusName, incusName)
+
+	if registered {
+		m.updateJob(jobID, func(job *models.Job) {
+			job.Stage = "draining"
+			job.Progress = 15
+			job.Message = "Draining node..."
+		})
+		m.updateNode(nodeID, map[string]any{"message": "Draining node"})
+
+		drainCmd := []string{
+			"kubectl", "--kubeconfig=" + rootKubeconfigPath, "drain", incusName,
+			"--ignore-daemonsets", "--delete-emptydir-data", "--force", "--timeout=60s",
+		}
+		if _, err := m.incus.Run(ctx, masterIncusName, drainCmd); err != nil {
+			m.failNodeDeleteJob(jobID, nodeID, err)
+			return
+		}
+
+		m.updateJob(jobID, func(job *models.Job) {
+			job.Stage = "removing-node-object"
+			job.Progress = 45
+			job.Message = "Removing node from the cluster..."
+		})
+
+		deleteNodeCmd := []string{"kubectl", "--kubeconfig=" + rootKubeconfigPath, "delete", "node", incusName}
+		if _, err := m.incus.Run(ctx, masterIncusName, deleteNodeCmd); err != nil {
+			m.failNodeDeleteJob(jobID, nodeID, err)
+			return
+		}
+	} else {
+		m.updateJob(jobID, func(job *models.Job) {
+			job.Stage = "skipping-drain"
+			job.Progress = 45
+			job.Message = "Node never joined the cluster — skipping drain"
+		})
 	}
 
 	m.updateJob(jobID, func(job *models.Job) {
@@ -93,8 +120,15 @@ func (m *Manager) runNodeDeleteJob(jobID, nodeID, incusName, masterIncusName str
 	m.updateNode(nodeID, map[string]any{"message": "Running kubeadm reset"})
 
 	if _, err := m.incus.Run(ctx, incusName, []string{"kubeadm", "reset", "--force"}); err != nil {
-		m.failNodeDeleteJob(jobID, nodeID, err)
-		return
+		if registered {
+			m.failNodeDeleteJob(jobID, nodeID, err)
+			return
+		}
+		// Best-effort for a node that never joined: it may have failed
+		// before the guest agent/containerd ever came up, in which case no
+		// command can run on it at all — that shouldn't block deleting the
+		// VM below, which is the actual point of this job.
+		log.Printf("node delete job %s: kubeadm reset on unregistered node %q failed, proceeding to VM delete anyway: %v", jobID, incusName, err)
 	}
 
 	m.updateJob(jobID, func(job *models.Job) {
@@ -119,6 +153,16 @@ func (m *Manager) runNodeDeleteJob(jobID, nodeID, incusName, masterIncusName str
 	})
 
 	m.db.Delete(&models.Node{}, "id = ?", nodeID)
+}
+
+// isNodeRegistered reports whether nodeIncusName currently exists as a
+// registered Node object in the cluster, per `kubectl get node` run against
+// the master. False on any error too (master unreachable, node genuinely
+// absent) — both cases mean there's nothing to drain.
+func (m *Manager) isNodeRegistered(ctx context.Context, masterIncusName, nodeIncusName string) bool {
+	checkCmd := []string{"kubectl", "--kubeconfig=" + rootKubeconfigPath, "get", "node", nodeIncusName}
+	result, err := m.incus.Exec(ctx, masterIncusName, checkCmd, nil)
+	return err == nil && result.ExitCode == 0
 }
 
 // failNodeDeleteJob marks the job and node as failed, mirroring failNodeJob.
