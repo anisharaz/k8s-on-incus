@@ -62,10 +62,16 @@ mkdir -p /var/lib/incus-lxcfs
 UDEVD_PID=$!
 /opt/incus/bin/incusd &
 
-# Wait for incusd to become ready before running the preseed
+# Wait for incusd to become ready before running the preseed. Checking for
+# the socket file's existence isn't enough: incusd creates/binds it early in
+# startup, well before it's actually serving API requests, so a preseed
+# launched right after the file appears can still hit "connection refused"
+# and fail (harmless — the marker is only set on success, so it retries on
+# next start — but it needlessly delays first-boot readiness). Probing the
+# API directly waits for the daemon to actually be up.
 echo "Waiting for incusd to become ready..."
 for i in $(seq 1 60); do
-    if [ -S /var/lib/incus/unix.socket ]; then
+    if incus query /1.0 >/dev/null 2>&1; then
         break
     fi
     sleep 1
