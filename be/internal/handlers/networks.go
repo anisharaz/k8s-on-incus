@@ -74,7 +74,7 @@ func (h *NetworkHandlers) CreateNetwork(c fiber.Ctx) error {
 		}
 		gateway = gatewayForNetwork(network)
 
-		existing, err := h.incus.ListNetworks()
+		existing, err := h.incus.ListNetworks(c.Context())
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
 				Error:   "incus error",
@@ -118,7 +118,7 @@ func (h *NetworkHandlers) CreateNetwork(c fiber.Ctx) error {
 	id := uuid.New().String()
 	incusName := generateIncusNetworkName(id)
 
-	if err := h.incus.CreateNetwork(incusName, incusConfig); err != nil {
+	if err := h.incus.CreateNetwork(c.Context(), incusName, incusConfig); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
 			Error:   "incus error",
 			Message: err.Error(),
@@ -127,9 +127,9 @@ func (h *NetworkHandlers) CreateNetwork(c fiber.Ctx) error {
 	}
 
 	if autoCIDR {
-		created, err := h.incus.GetNetwork(incusName)
+		created, err := h.incus.GetNetwork(c.Context(), incusName)
 		if err != nil {
-			_ = h.incus.DeleteNetwork(incusName)
+			_ = h.incus.DeleteNetwork(c.Context(), incusName)
 			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
 				Error:   "incus error",
 				Message: "failed to read auto-assigned network config: " + err.Error(),
@@ -139,7 +139,7 @@ func (h *NetworkHandlers) CreateNetwork(c fiber.Ctx) error {
 
 		ip, ipnet, err := net.ParseCIDR(created.Config["ipv4.address"])
 		if err != nil {
-			_ = h.incus.DeleteNetwork(incusName)
+			_ = h.incus.DeleteNetwork(c.Context(), incusName)
 			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
 				Error:   "incus error",
 				Message: "incus returned an unparseable auto-assigned address: " + err.Error(),
@@ -164,7 +164,7 @@ func (h *NetworkHandlers) CreateNetwork(c fiber.Ctx) error {
 	if err := h.db.Create(&clusterNetwork).Error; err != nil {
 		// Roll back the Incus-side network so the name isn't stuck
 		// existing-in-Incus-but-unknown-to-us after a DB failure.
-		_ = h.incus.DeleteNetwork(incusName)
+		_ = h.incus.DeleteNetwork(c.Context(), incusName)
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
 			Error:   "database error",
 			Message: err.Error(),
@@ -238,7 +238,7 @@ func (h *NetworkHandlers) DeleteNetwork(c fiber.Ctx) error {
 
 	// Incus refuses to delete a network still in use by an instance, so any
 	// error here (e.g. "network in use") is returned as-is.
-	if err := h.incus.DeleteNetwork(network.IncusName); err != nil {
+	if err := h.incus.DeleteNetwork(c.Context(), network.IncusName); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
 			Error:   "incus error",
 			Message: err.Error(),

@@ -35,6 +35,41 @@ func New(socketPath string) (*Client, error) {
 // meta/incusDocker/incusStuff/incus_admin_config.yaml).
 const rootStoragePool = "default"
 
+// callWithContext runs fn — a blocking Incus SDK call that takes no context
+// of its own (CreateInstance, GetInstance, ExecInstance, and friends all
+// fall into this category; only the operation-wait step that typically
+// follows one of these takes a context) — and returns as soon as either fn
+// completes or ctx is done, whichever comes first.
+//
+// If ctx wins, fn's goroutine is left running in the background rather than
+// truly aborted: cancelling the underlying HTTP request would mean touching
+// the shared http.Client all calls funnel through, including long-running
+// operation waits that legitimately need no deadline, and that's a much
+// larger blast radius than the actual problem here. The actual problem is
+// narrower: without this, a wedged Incus daemon blocks the calling job
+// goroutine forever with no way to fail the job or clean up — this at least
+// unblocks the caller so it can do that, even though the abandoned
+// goroutine and its request linger until the daemon itself responds.
+func callWithContext[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	type result struct {
+		val T
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		val, err := fn()
+		ch <- result{val, err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	case res := <-ch:
+		return res.val, res.err
+	}
+}
+
 // Launch creates a new instance from the given image alias, attaches its
 // eth0 device to the given network (overriding whatever network the
 // default profile would otherwise assign), sizes it with the given CPU
@@ -77,7 +112,9 @@ func (c *Client) Launch(ctx context.Context, name, imageAlias, network, cpu, mem
 		},
 	}
 
-	op, err := c.server.CreateInstance(req)
+	op, err := callWithContext(ctx, func() (incusclient.Operation, error) {
+		return c.server.CreateInstance(req)
+	})
 	if err != nil {
 		return fmt.Errorf("create instance %q: %w", name, err)
 	}
@@ -101,11 +138,13 @@ func (c *Client) Stop(ctx context.Context, name string, force bool) error {
 }
 
 func (c *Client) setState(ctx context.Context, name, action string, timeoutSeconds int, force bool) error {
-	op, err := c.server.UpdateInstanceState(name, api.InstanceStatePut{
-		Action:  action,
-		Timeout: timeoutSeconds,
-		Force:   force,
-	}, "")
+	op, err := callWithContext(ctx, func() (incusclient.Operation, error) {
+		return c.server.UpdateInstanceState(name, api.InstanceStatePut{
+			Action:  action,
+			Timeout: timeoutSeconds,
+			Force:   force,
+		}, "")
+	})
 	if err != nil {
 		return fmt.Errorf("%s instance %q: %w", action, name, err)
 	}
@@ -121,7 +160,10 @@ func (c *Client) setState(ctx context.Context, name, action string, timeoutSecon
 // no-op if the instance is already gone, so retrying a failed deletion job
 // is safe even if some instances were already torn down.
 func (c *Client) Delete(ctx context.Context, name string) error {
-	instance, _, err := c.server.GetInstance(name)
+	instance, err := callWithContext(ctx, func() (*api.Instance, error) {
+		instance, _, err := c.server.GetInstance(name)
+		return instance, err
+	})
 	if err != nil {
 		if api.StatusErrorCheck(err, http.StatusNotFound) {
 			return nil
@@ -135,7 +177,9 @@ func (c *Client) Delete(ctx context.Context, name string) error {
 		}
 	}
 
-	op, err := c.server.DeleteInstance(name)
+	op, err := callWithContext(ctx, func() (incusclient.Operation, error) {
+		return c.server.DeleteInstance(name)
+	})
 	if err != nil {
 		return fmt.Errorf("delete instance %q: %w", name, err)
 	}
@@ -148,8 +192,11 @@ func (c *Client) Delete(ctx context.Context, name string) error {
 }
 
 // Get returns the current state of a single instance.
-func (c *Client) Get(name string) (*api.Instance, error) {
-	instance, _, err := c.server.GetInstance(name)
+func (c *Client) Get(ctx context.Context, name string) (*api.Instance, error) {
+	instance, err := callWithContext(ctx, func() (*api.Instance, error) {
+		instance, _, err := c.server.GetInstance(name)
+		return instance, err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get instance %q: %w", name, err)
 	}
@@ -158,8 +205,10 @@ func (c *Client) Get(name string) (*api.Instance, error) {
 }
 
 // List returns all instances known to the daemon.
-func (c *Client) List() ([]api.Instance, error) {
-	instances, err := c.server.GetInstances(api.InstanceTypeAny)
+func (c *Client) List(ctx context.Context) ([]api.Instance, error) {
+	instances, err := callWithContext(ctx, func() ([]api.Instance, error) {
+		return c.server.GetInstances(api.InstanceTypeAny)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list instances: %w", err)
 	}
@@ -175,7 +224,10 @@ func (c *Client) WaitForIPv4(ctx context.Context, name string) (string, error) {
 	defer ticker.Stop()
 
 	for {
-		state, _, err := c.server.GetInstanceState(name)
+		state, err := callWithContext(ctx, func() (*api.InstanceState, error) {
+			state, _, err := c.server.GetInstanceState(name)
+			return state, err
+		})
 		if err == nil {
 			for iface, net := range state.Network {
 				if iface == "lo" {

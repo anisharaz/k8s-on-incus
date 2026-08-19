@@ -29,7 +29,7 @@ func NewStatusHandlers(incusClient *incus.Client) *StatusHandlers {
 // installed in the app's container image.
 func (h *StatusHandlers) Status(c fiber.Ctx) error {
 	incusStatus := "running"
-	if _, err := h.incus.List(); err != nil {
+	if _, err := h.incus.List(c.Context()); err != nil {
 		incusStatus = "unreachable"
 	}
 

@@ -6,9 +6,9 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/gorilla/websocket"
 	incusclient "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
-	"github.com/gorilla/websocket"
 )
 
 // ExecInteractive starts an interactive PTY session (bash) inside the named
@@ -51,7 +51,9 @@ func (c *Client) ExecInteractive(ctx context.Context, name string, stdin io.Read
 		DataDone: dataDone,
 	}
 
-	op, err := c.server.ExecInstance(name, req, &args)
+	op, err := callWithContext(ctx, func() (incusclient.Operation, error) {
+		return c.server.ExecInstance(name, req, &args)
+	})
 	if err != nil {
 		return fmt.Errorf("interactive exec in instance %q: %w", name, err)
 	}

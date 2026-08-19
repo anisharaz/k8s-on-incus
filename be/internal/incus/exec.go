@@ -65,7 +65,9 @@ func (c *Client) Exec(ctx context.Context, name string, command []string, env ma
 		DataDone: dataDone,
 	}
 
-	op, err := c.server.ExecInstance(name, req, &args)
+	op, err := callWithContext(ctx, func() (incusclient.Operation, error) {
+		return c.server.ExecInstance(name, req, &args)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("exec in instance %q: %w", name, err)
 	}
