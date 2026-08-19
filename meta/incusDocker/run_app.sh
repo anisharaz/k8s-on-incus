@@ -64,11 +64,32 @@ get_kvm_gid() {
 
 refresh_compose_env() {
     [ -f "$COMPOSE_FILE" ] || fail "Compose file not found: $COMPOSE_FILE"
-    
-    cat > "$ENV_FILE" <<EOF
+
+    if [ ! -f "$ENV_FILE" ]; then
+        cat > "$ENV_FILE" <<EOF
 KVM_GID=$KVM_GID
 SETIPTABLES=$SETIPTABLES
 EOF
+        return
+    fi
+
+    # .env may already have other vars set by quickstart.sh or by hand
+    # (POSTGRES_PASSWORD, JWT_SECRET, COOKIE_SECURE, ...) — update only
+    # KVM_GID/SETIPTABLES in place instead of overwriting the whole file.
+    # Re-running this script used to reset those other values back to
+    # compose's defaults, silently breaking the DB connection and
+    # invalidating every session.
+    set_env_var KVM_GID "$KVM_GID"
+    set_env_var SETIPTABLES "$SETIPTABLES"
+}
+
+set_env_var() {
+    local key="$1" value="$2"
+    if grep -q "^${key}=" "$ENV_FILE"; then
+        sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+    else
+        echo "${key}=${value}" >> "$ENV_FILE"
+    fi
 }
 
 compose() {
