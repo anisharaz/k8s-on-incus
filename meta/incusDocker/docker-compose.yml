@@ -125,7 +125,7 @@ services:
     restart: unless-stopped
     depends_on:
       koiapp:
-        condition: service_started
+        condition: service_healthy
     configs:
       - source: caddyfile
         target: /etc/caddy/Caddyfile
