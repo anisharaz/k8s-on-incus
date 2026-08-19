@@ -17,3 +17,12 @@ export { AuthProvider } from "./AuthContext";
 export { AuthContext } from "./auth.context";
 export type { AuthContextType, AuthStatus } from "./auth.context";
 export { useAuth } from "./useAuth";
+
+// Re-export terminal sessions context and hook
+export { TerminalSessionsProvider } from "./TerminalSessionsContext";
+export { TerminalSessionsContext } from "./terminalSessions.context";
+export type {
+  TerminalSessionsContextType,
+  OpenTerminalSession,
+} from "./terminalSessions.context";
+export { useTerminalSessions } from "./useTerminalSessions";

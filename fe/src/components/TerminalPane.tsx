@@ -9,9 +9,9 @@ interface TerminalPaneProps {
   clusterId: string;
   nodeId: string;
   /** Whether this pane is the one currently shown. Inactive panes stay
-   * mounted (session alive) but hidden — see TerminalPage, which keeps
-   * every opened pane mounted so switching between nodes doesn't kill
-   * the connection. */
+   * mounted (session alive) but hidden — see TerminalOverlay, which keeps
+   * every opened pane mounted so switching nodes (or navigating away and
+   * back) doesn't kill the connection. */
   active: boolean;
 }
 
