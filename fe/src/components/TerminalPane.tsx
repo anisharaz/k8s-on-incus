@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
 import { cn } from "@/lib/utils";
+import type { TerminalSessionStatus } from "@/context";
 
 interface TerminalPaneProps {
   clusterId: string;
@@ -13,6 +14,10 @@ interface TerminalPaneProps {
    * every opened pane mounted so switching nodes (or navigating away and
    * back) doesn't kill the connection. */
   active: boolean;
+  /** Reports the websocket's lifecycle so a session that dies in the
+   * background isn't invisible — TerminalOverlay reflects this in the
+   * session pill list, since this pane may not even be the visible one. */
+  onStatusChange?: (status: TerminalSessionStatus) => void;
 }
 
 // Bridges an xterm.js instance to the node's interactive shell over the
@@ -20,7 +25,12 @@ interface TerminalPaneProps {
 // this component's mount/unmount only — NOT to `active` — so a caller that
 // keeps inactive panes mounted keeps their sessions alive in the
 // background.
-export function TerminalPane({ clusterId, nodeId, active }: TerminalPaneProps) {
+export function TerminalPane({
+  clusterId,
+  nodeId,
+  active,
+  onStatusChange,
+}: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -29,9 +39,25 @@ export function TerminalPane({ clusterId, nodeId, active }: TerminalPaneProps) {
     activeRef.current = active;
   }, [active]);
 
+  // Keeps onStatusChange callable from the socket's event handlers without
+  // making the setup effect below re-run (and so tear down/reopen the
+  // websocket) every time the caller passes a new function reference.
+  const onStatusChangeRef = useRef(onStatusChange);
+  useEffect(() => {
+    onStatusChangeRef.current = onStatusChange;
+  }, [onStatusChange]);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    // Guards the socket's event handlers against firing after this effect
+    // has already been torn down (unmount, or clusterId/nodeId changing) —
+    // without it, a late event from an old, already-replaced socket could
+    // overwrite the status a newer one already reported.
+    let torndown = false;
+
+    onStatusChangeRef.current?.("connecting");
 
     const term = new Terminal({
       cursorBlink: true,
@@ -58,19 +84,25 @@ export function TerminalPane({ clusterId, nodeId, active }: TerminalPaneProps) {
       );
     };
 
+    let errored = false;
+
     ws.onopen = () => {
       sendResize();
       term.focus();
+      if (!torndown) onStatusChangeRef.current?.("connected");
     };
     ws.onmessage = (ev) => {
       if (typeof ev.data === "string") return; // reserved for future control frames
       term.write(new Uint8Array(ev.data as ArrayBuffer));
     };
     ws.onerror = () => {
+      errored = true;
       term.writeln("\r\n\x1b[31mConnection error.\x1b[0m");
+      if (!torndown) onStatusChangeRef.current?.("error");
     };
     ws.onclose = () => {
       term.writeln("\r\n\x1b[33mSession closed.\x1b[0m");
+      if (!torndown) onStatusChangeRef.current?.(errored ? "error" : "closed");
     };
 
     const dataDisposable = term.onData((data) => {
@@ -92,6 +124,7 @@ export function TerminalPane({ clusterId, nodeId, active }: TerminalPaneProps) {
     resizeObserver.observe(container);
 
     return () => {
+      torndown = true;
       resizeObserver.disconnect();
       dataDisposable.dispose();
       ws.close();

@@ -24,5 +24,6 @@ export { TerminalSessionsContext } from "./terminalSessions.context";
 export type {
   TerminalSessionsContextType,
   OpenTerminalSession,
+  TerminalSessionStatus,
 } from "./terminalSessions.context";
 export { useTerminalSessions } from "./useTerminalSessions";

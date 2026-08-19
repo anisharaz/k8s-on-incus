@@ -1,6 +1,9 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { TerminalSessionsContext } from "./terminalSessions.context";
-import type { OpenTerminalSession } from "./terminalSessions.context";
+import type {
+  OpenTerminalSession,
+  TerminalSessionStatus,
+} from "./terminalSessions.context";
 import { useAuth } from "./useAuth";
 import type { ClusterNode } from "@/lib/types";
 
@@ -29,12 +32,35 @@ export function TerminalSessionsProvider({
   ) {
     setSessions((prev) => {
       if (prev.some((s) => s.node.id === node.id)) return prev;
-      return [...prev, { clusterId, clusterName, node }];
+      return [
+        ...prev,
+        { clusterId, clusterName, node, status: "connecting", generation: 0 },
+      ];
     });
   }
 
   function closeSession(nodeId: string) {
     setSessions((prev) => prev.filter((s) => s.node.id !== nodeId));
+  }
+
+  function setSessionStatus(nodeId: string, status: TerminalSessionStatus) {
+    setSessions((prev) =>
+      prev.map((s) => (s.node.id === nodeId ? { ...s, status } : s)),
+    );
+  }
+
+  // Forces TerminalPane to fully remount (see TerminalOverlay's key) so it
+  // opens a brand new WebSocket instead of reusing the dead one — there's
+  // no in-place reconnect path inside TerminalPane, and a fresh mount is
+  // simpler and just as effective.
+  function reconnectSession(nodeId: string) {
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.node.id === nodeId
+          ? { ...s, status: "connecting", generation: s.generation + 1 }
+          : s,
+      ),
+    );
   }
 
   // Reloading/closing the tab kills every open terminal session — warn
@@ -60,7 +86,13 @@ export function TerminalSessionsProvider({
 
   return (
     <TerminalSessionsContext.Provider
-      value={{ sessions, registerSession, closeSession }}
+      value={{
+        sessions,
+        registerSession,
+        closeSession,
+        setSessionStatus,
+        reconnectSession,
+      }}
     >
       {children}
     </TerminalSessionsContext.Provider>

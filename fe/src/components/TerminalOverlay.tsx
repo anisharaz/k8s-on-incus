@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router";
-import { AlertCircle, ArrowLeft, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, RotateCw, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,7 +36,13 @@ export function TerminalOverlay() {
   const location = useLocation();
   const navigate = useNavigate();
   const { status } = useAuth();
-  const { sessions, registerSession, closeSession } = useTerminalSessions();
+  const {
+    sessions,
+    registerSession,
+    closeSession,
+    setSessionStatus,
+    reconnectSession,
+  } = useTerminalSessions();
 
   const match = TERMINAL_ROUTE.exec(location.pathname);
   const onRoute = match !== null;
@@ -228,13 +234,18 @@ export function TerminalOverlay() {
             </div>
           </div>
 
-          {sessions.length > 1 && (
+          {(sessions.length > 1 ||
+            sessions.some(
+              (s) => s.status === "error" || s.status === "closed",
+            )) && (
             <div className="flex flex-wrap items-center gap-1.5 border-t pt-2">
               <span className="text-xs uppercase tracking-wide text-muted-foreground">
                 Open sessions
               </span>
               {sessions.map((session) => {
                 const isActive = session.node.id === nodeId;
+                const isDead =
+                  session.status === "error" || session.status === "closed";
                 return (
                   <div
                     key={session.node.id}
@@ -243,11 +254,34 @@ export function TerminalOverlay() {
                       isActive
                         ? "border-primary/40 bg-primary/10"
                         : "border-transparent bg-muted",
+                      isDead && "border-destructive/40",
                     )}
                   >
+                    <span
+                      aria-hidden
+                      title={
+                        session.status === "connected"
+                          ? "Connected"
+                          : session.status === "connecting"
+                            ? "Connecting…"
+                            : session.status === "error"
+                              ? "Connection error"
+                              : "Session closed"
+                      }
+                      className={cn(
+                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                        session.status === "connected" && "bg-emerald-500",
+                        session.status === "connecting" &&
+                          "animate-pulse bg-amber-500",
+                        isDead && "bg-destructive",
+                      )}
+                    />
                     <button
                       type="button"
-                      className="text-foreground hover:underline"
+                      className={cn(
+                        "text-foreground hover:underline",
+                        isDead && "text-muted-foreground",
+                      )}
                       onClick={() =>
                         navigate(
                           `/terminal/${session.clusterId}/${session.node.id}`,
@@ -257,6 +291,17 @@ export function TerminalOverlay() {
                     >
                       {session.clusterName} / {session.node.name}
                     </button>
+                    {isDead && (
+                      <button
+                        type="button"
+                        aria-label={`Reconnect session on ${session.node.name}`}
+                        title="Reconnect"
+                        className="rounded-sm p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        onClick={() => reconnectSession(session.node.id)}
+                      >
+                        <RotateCw className="h-3 w-3" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       aria-label={`Close session on ${session.node.name}`}
@@ -287,10 +332,13 @@ export function TerminalOverlay() {
 
         {sessions.map((session) => (
           <TerminalPane
-            key={session.node.id}
+            // generation changes on reconnectSession, forcing a full
+            // remount (fresh WebSocket) instead of reusing the dead one.
+            key={`${session.node.id}:${session.generation}`}
             clusterId={session.clusterId}
             nodeId={session.node.id}
             active={onRoute && session.node.id === nodeId}
+            onStatusChange={(next) => setSessionStatus(session.node.id, next)}
           />
         ))}
 
