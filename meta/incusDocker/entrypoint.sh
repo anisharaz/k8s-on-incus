@@ -5,7 +5,15 @@ trap "cleanup; exit" SIGTERM
 
 cleanup() {
     echo "Stopping incusd..."
-    incus admin shutdown
+    # `incus admin shutdown` gracefully stops every running instance first
+    # (Kubernetes VMs included), which can legitimately take a while — but
+    # with no timeout at all it can also block indefinitely on a wedged
+    # guest, and Docker's default 10s stop grace period would then SIGKILL
+    # this whole container mid-shutdown (docker-compose.yml raises that
+    # grace period to comfortably exceed this timeout). Bounding it here
+    # means a stuck VM causes an ungraceful stop of just that VM after 90s,
+    # not a SIGKILL of incusd itself and every VM at once.
+    incus admin shutdown --timeout 90
     pkill -TERM incusd
     echo "Stopped incusd."
     

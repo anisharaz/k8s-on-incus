@@ -5,6 +5,13 @@ services:
     privileged: true
     restart: unless-stopped
     network_mode: host
+    # entrypoint.sh's cleanup() gracefully stops every running VM before
+    # incusd exits, bounded by its own 90s `incus admin shutdown --timeout`.
+    # Docker's default 10s grace period would SIGKILL the whole container
+    # (incusd and every VM at once) long before that finishes — this gives
+    # cleanup() enough room to actually run, plus slack for the rest of its
+    # teardown steps (lxcfs, child processes).
+    stop_grace_period: 120s
 
     environment:
       # Adds ACCEPT rules to the DOCKER-USER chains so container
