@@ -42,6 +42,13 @@ func main() {
 
 	jobManager := jobs.NewManager(db, incusClient)
 
+	// Any job still "queued"/"running" belonged to a goroutine that died
+	// with the previous process (crash/deploy/restart) and will never
+	// update its row again — fail it (and the node/cluster it was
+	// operating on) now, before accepting new requests, so nothing is left
+	// permanently stuck.
+	jobManager.Reconcile()
+
 	// Setup all routes
 	routes.SetupRoutes(app, jobManager, db, incusClient, cfg)
 
