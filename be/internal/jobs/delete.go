@@ -143,6 +143,19 @@ func (m *Manager) runNodeDeleteJob(jobID, nodeID, incusName, masterIncusName str
 		return
 	}
 
+	// The VM is already gone at this point — a failure here shouldn't (and
+	// previously didn't) re-run any teardown, but it must stop this job
+	// from reporting success while leaving the row behind: the API's
+	// delete-node guard refuses to touch a node already "deleting", so an
+	// unnoticed failure here would leave it permanently stuck. Checked
+	// (and the job only marked succeeded) before updating job status,
+	// unlike before, when the delete ran after — so a failure here used to
+	// go unnoticed regardless.
+	if err := m.db.Delete(&models.Node{}, "id = ?", nodeID).Error; err != nil {
+		m.failNodeDeleteJob(jobID, nodeID, fmt.Errorf("delete node record: %w", err))
+		return
+	}
+
 	completedAt := time.Now().UTC()
 	m.updateJob(jobID, func(job *models.Job) {
 		job.Status = models.JobStatusSucceeded
@@ -151,8 +164,6 @@ func (m *Manager) runNodeDeleteJob(jobID, nodeID, incusName, masterIncusName str
 		job.Message = "Node deleted"
 		job.CompletedAt = &completedAt
 	})
-
-	m.db.Delete(&models.Node{}, "id = ?", nodeID)
 }
 
 // isNodeRegistered reports whether nodeIncusName currently exists as a
@@ -257,7 +268,15 @@ func (m *Manager) runClusterDeleteJob(jobID, clusterID, masterIncusName string, 
 		job.Message = "Removing cluster records..."
 	})
 
-	m.db.Delete(&models.Cluster{}, "id = ?", clusterID)
+	// Both VMs are already gone at this point — a failure here shouldn't
+	// (and previously didn't) re-run any teardown, but it must stop this
+	// job from reporting success while leaving the row behind: the API's
+	// delete-cluster guard refuses to touch a cluster already "deleting",
+	// so an unnoticed failure here would leave it permanently stuck.
+	if err := m.db.Delete(&models.Cluster{}, "id = ?", clusterID).Error; err != nil {
+		m.failClusterDeleteJob(jobID, clusterID, fmt.Errorf("delete cluster record: %w", err))
+		return
+	}
 
 	completedAt := time.Now().UTC()
 	m.updateJob(jobID, func(job *models.Job) {
