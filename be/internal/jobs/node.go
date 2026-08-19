@@ -71,7 +71,10 @@ func (m *Manager) CreateNodeJob(ownerID, nodeID, incusName, networkIncusName, ro
 		return nil, err
 	}
 
-	go m.runNodeJob(job.ID, nodeID, incusName, networkIncusName, role, masterIncusName, cni, size)
+	go func() {
+		defer recoverJobPanic(func(err error) { m.failNodeJob(job.ID, nodeID, err) })
+		m.runNodeJob(job.ID, nodeID, incusName, networkIncusName, role, masterIncusName, cni, size)
+	}()
 
 	return job, nil
 }

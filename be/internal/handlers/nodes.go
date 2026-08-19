@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"runtime/debug"
 
 	"github.com/anisharaz/incus-k8s-manager/be/internal/incus"
 	"github.com/anisharaz/incus-k8s-manager/be/internal/jobs"
@@ -373,6 +375,15 @@ func (h *NodeHandlers) Terminal(conn *contribws.Conn) {
 
 	done := make(chan error, 1)
 	go func() {
+		// A panic here (e.g. deep in the Incus SDK) would otherwise crash
+		// the whole process — recover it into a normal error on `done` so
+		// only this one terminal session dies.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("terminal exec goroutine panicked: %v\n%s", r, debug.Stack())
+				done <- fmt.Errorf("panic: %v", r)
+			}
+		}()
 		done <- h.incus.ExecInteractive(ctx, incusName, stdinR, stdout, resize)
 	}()
 

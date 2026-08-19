@@ -44,7 +44,10 @@ func (m *Manager) DeleteNodeJob(ownerID, nodeID, incusName, masterIncusName stri
 		return nil, err
 	}
 
-	go m.runNodeDeleteJob(job.ID, nodeID, incusName, masterIncusName)
+	go func() {
+		defer recoverJobPanic(func(err error) { m.failNodeDeleteJob(job.ID, nodeID, err) })
+		m.runNodeDeleteJob(job.ID, nodeID, incusName, masterIncusName)
+	}()
 
 	return job, nil
 }
@@ -162,7 +165,10 @@ func (m *Manager) DeleteClusterJob(ownerID, clusterID, masterIncusName string, w
 		return nil, err
 	}
 
-	go m.runClusterDeleteJob(job.ID, clusterID, masterIncusName, workerIncusNames)
+	go func() {
+		defer recoverJobPanic(func(err error) { m.failClusterDeleteJob(job.ID, clusterID, err) })
+		m.runClusterDeleteJob(job.ID, clusterID, masterIncusName, workerIncusNames)
+	}()
 
 	return job, nil
 }
