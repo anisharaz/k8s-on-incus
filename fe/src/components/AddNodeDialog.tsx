@@ -17,6 +17,7 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -24,6 +25,7 @@ import {
 } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SizeInput } from "@/components/SizeInput";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { api, ApiError } from "@/lib/api";
 import type { ClusterNode } from "@/lib/types";
@@ -163,12 +165,18 @@ export function AddNodeDialog({
                 <FormItem>
                   <FormLabel>Memory</FormLabel>
                   <FormControl>
-                    <Input
-                      placeholder="Default: 2GiB, minimum 1700MB"
+                    <SizeInput
+                      placeholder="2"
                       disabled={isLoading}
-                      {...field}
+                      value={field.value ?? ""}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      name={field.name}
                     />
                   </FormControl>
+                  <FormDescription>
+                    Default 2 GiB, minimum 1700 MB.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -180,12 +188,18 @@ export function AddNodeDialog({
                 <FormItem>
                   <FormLabel>Disk</FormLabel>
                   <FormControl>
-                    <Input
-                      placeholder="Default: 20GiB, minimum 20GiB"
+                    <SizeInput
+                      placeholder="20"
                       disabled={isLoading}
-                      {...field}
+                      value={field.value ?? ""}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      name={field.name}
                     />
                   </FormControl>
+                  <FormDescription>
+                    Default 20 GiB, minimum 20 GiB.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

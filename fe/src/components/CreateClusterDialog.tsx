@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SizeInput } from "@/components/SizeInput";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Select,
@@ -216,7 +217,7 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
                         />
                       </SelectTrigger>
                     </FormControl>
-                    <SelectContent>
+                    <SelectContent position="popper">
                       {networks.map((network) => (
                         <SelectItem key={network.id} value={network.id}>
                           {network.name} ({network.cidr})
@@ -310,12 +311,18 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
                     <FormItem>
                       <FormLabel>Memory</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder="Default: 2GiB, minimum 1700MB"
+                        <SizeInput
+                          placeholder="2"
                           disabled={isLoading}
-                          {...field}
+                          value={field.value ?? ""}
+                          onChange={field.onChange}
+                          onBlur={field.onBlur}
+                          name={field.name}
                         />
                       </FormControl>
+                      <FormDescription>
+                        Default 2 GiB, minimum 1700 MB.
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -327,12 +334,18 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
                     <FormItem>
                       <FormLabel>Disk</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder="Default: 20GiB, minimum 20GiB"
+                        <SizeInput
+                          placeholder="20"
                           disabled={isLoading}
-                          {...field}
+                          value={field.value ?? ""}
+                          onChange={field.onChange}
+                          onBlur={field.onBlur}
+                          name={field.name}
                         />
                       </FormControl>
+                      <FormDescription>
+                        Default 20 GiB, minimum 20 GiB.
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
