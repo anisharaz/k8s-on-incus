@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/anisharaz/incus-k8s-manager/be/internal/auth"
+	"github.com/anisharaz/incus-k8s-manager/be/internal/incus"
 	"github.com/anisharaz/incus-k8s-manager/be/internal/middleware"
 	"github.com/anisharaz/incus-k8s-manager/be/internal/models"
 	"github.com/gofiber/fiber/v3"
@@ -27,12 +29,13 @@ type AuthHandlers struct {
 	db           *gorm.DB
 	jwtSecret    []byte
 	cookieSecure bool
+	incus        *incus.Client
 }
 
 // NewAuthHandlers creates a new auth handler. cookieSecure should be true
 // whenever the app is served over HTTPS (sets the cookie's Secure attribute).
-func NewAuthHandlers(db *gorm.DB, jwtSecret []byte, cookieSecure bool) *AuthHandlers {
-	return &AuthHandlers{db: db, jwtSecret: jwtSecret, cookieSecure: cookieSecure}
+func NewAuthHandlers(db *gorm.DB, jwtSecret []byte, cookieSecure bool, incusClient *incus.Client) *AuthHandlers {
+	return &AuthHandlers{db: db, jwtSecret: jwtSecret, cookieSecure: cookieSecure, incus: incusClient}
 }
 
 // BootstrapStatus reports whether the admin account has been created yet,
@@ -126,6 +129,12 @@ func (h *AuthHandlers) RegisterAdmin(c fiber.Ctx) error {
 			Message: txErr.Error(),
 			Code:    fiber.StatusInternalServerError,
 		})
+	}
+
+	// Best-effort, same as UserHandlers.CreateUser: a missing default
+	// network is inconvenient but not worth failing bootstrap over.
+	if _, err := createDefaultNetwork(c.Context(), h.db, h.incus, user.ID); err != nil {
+		log.Printf("failed to create default network for user %s: %v", user.ID, err)
 	}
 
 	token, err := auth.GenerateToken(h.jwtSecret, user)

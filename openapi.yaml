@@ -283,6 +283,33 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Users]
+      operationId: deleteUser
+      summary: Delete a non-admin user and everything they own
+      description: |
+        Admin-only, and only for non-admin targets — since the caller must
+        already be an admin, this also means an admin can never delete
+        themselves or another admin here. Starts a background job
+        (`type: "user_deletion"`, owned by the admin who triggered it) that
+        deletes every VM in every cluster the target owns, those clusters,
+        every network they own, and finally the user account itself.
+      responses:
+        "202":
+          description: Accepted — deletion running in the background
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job: { $ref: "#/components/schemas/Job" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Not an admin, or the target user is an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # --------------------------------------------------------------- Networks
   /api/v1/networks:
@@ -903,8 +930,8 @@ components:
         ownerId: { type: string, format: uuid }
         type:
           type: string
-          enum: [node_provision, node_deletion, cluster_deletion]
-          description: Check metadata.role (node_provision) / metadata.nodeId / metadata.clusterId to know which resource this job is about.
+          enum: [node_provision, node_deletion, cluster_deletion, user_deletion]
+          description: Check metadata.role (node_provision) / metadata.nodeId / metadata.clusterId / metadata.userId to know which resource this job is about.
         name: { type: string }
         status: { type: string, enum: [queued, running, succeeded, failed] }
         progress: { type: integer, minimum: 0, maximum: 100 }

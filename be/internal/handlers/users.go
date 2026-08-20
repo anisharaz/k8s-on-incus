@@ -3,8 +3,12 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
+	"github.com/anisharaz/incus-k8s-manager/be/internal/incus"
+	"github.com/anisharaz/incus-k8s-manager/be/internal/jobs"
+	"github.com/anisharaz/incus-k8s-manager/be/internal/middleware"
 	"github.com/anisharaz/incus-k8s-manager/be/internal/models"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -16,12 +20,14 @@ import (
 // admin (see routes.go) — regular users are created by the admin, not
 // self-registered.
 type UserHandlers struct {
-	db *gorm.DB
+	db      *gorm.DB
+	manager *jobs.Manager
+	incus   *incus.Client
 }
 
 // NewUserHandlers creates a new user handler.
-func NewUserHandlers(db *gorm.DB) *UserHandlers {
-	return &UserHandlers{db: db}
+func NewUserHandlers(db *gorm.DB, manager *jobs.Manager, incusClient *incus.Client) *UserHandlers {
+	return &UserHandlers{db: db, manager: manager, incus: incusClient}
 }
 
 // CreateUser creates a new regular user (role is always "user" here — the
@@ -88,6 +94,13 @@ func (h *UserHandlers) CreateUser(c fiber.Ctx) error {
 		})
 	}
 
+	// Best-effort: a missing default network is inconvenient (the user has
+	// to create one by hand before their first cluster) but not worth
+	// failing account creation over.
+	if _, err := createDefaultNetwork(c.Context(), h.db, h.incus, user.ID); err != nil {
+		log.Printf("failed to create default network for user %s: %v", user.ID, err)
+	}
+
 	return c.Status(fiber.StatusCreated).JSON(models.UserResponse{User: user})
 }
 
@@ -124,4 +137,49 @@ func (h *UserHandlers) GetUser(c fiber.Ctx) error {
 	}
 
 	return c.JSON(models.UserResponse{User: user})
+}
+
+// DeleteUser starts a background job that tears down every resource the
+// target user owns (every cluster's VMs, every network) and then deletes
+// the user row itself. Only non-admin users can be deleted this way — the
+// caller is already required to be an admin (see routes.go), so this also
+// means an admin can't delete themselves or another admin through this
+// endpoint.
+func (h *UserHandlers) DeleteUser(c fiber.Ctx) error {
+	adminID := middleware.ClaimsFromContext(c).UserID
+
+	var target models.User
+	if err := h.db.Where("id = ?", c.Params("id")).First(&target).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse{
+				Error:   "not found",
+				Message: "user not found",
+				Code:    fiber.StatusNotFound,
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   "database error",
+			Message: err.Error(),
+			Code:    fiber.StatusInternalServerError,
+		})
+	}
+
+	if target.Role == string(models.UserRoleAdmin) {
+		return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse{
+			Error:   "cannot delete admin",
+			Message: "admin users can't be deleted through this endpoint",
+			Code:    fiber.StatusForbidden,
+		})
+	}
+
+	job, err := h.manager.DeleteUserJob(adminID, target.ID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   "job creation error",
+			Message: err.Error(),
+			Code:    fiber.StatusInternalServerError,
+		})
+	}
+
+	return c.Status(fiber.StatusAccepted).JSON(models.JobResponse{Job: *job})
 }

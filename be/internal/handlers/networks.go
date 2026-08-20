@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,63 @@ import (
 	incusapi "github.com/lxc/incus/v7/shared/api"
 	"gorm.io/gorm"
 )
+
+// defaultNetworkName is the auto-created network every new user gets so
+// they have something to pick immediately when creating their first
+// cluster, without a separate manual "create a network" step first.
+const defaultNetworkName = "default"
+
+// createDefaultNetwork creates an auto-CIDR "default" cluster network for a
+// newly created user — the same as CreateNetwork's auto-CIDR path, just
+// invoked directly rather than via an HTTP request. Called from both
+// AuthHandlers.RegisterAdmin and UserHandlers.CreateUser right after the
+// user row is created. Failure here is the caller's to decide how to
+// handle; it deliberately doesn't fail user creation itself in either
+// caller — the user can always create a network by hand afterward.
+func createDefaultNetwork(ctx context.Context, db *gorm.DB, incusClient *incus.Client, ownerID string) (*models.ClusterNetwork, error) {
+	id := uuid.New().String()
+	incusName := generateIncusNetworkName(id)
+
+	incusConfig := map[string]string{
+		"ipv4.nat":     "true",
+		"ipv6.address": "none",
+		"ipv4.address": "auto",
+	}
+
+	if err := incusClient.CreateNetwork(ctx, incusName, incusConfig); err != nil {
+		return nil, fmt.Errorf("create incus network: %w", err)
+	}
+
+	created, err := incusClient.GetNetwork(ctx, incusName)
+	if err != nil {
+		_ = incusClient.DeleteNetwork(ctx, incusName)
+		return nil, fmt.Errorf("read auto-assigned network config: %w", err)
+	}
+
+	ip, ipnet, err := net.ParseCIDR(created.Config["ipv4.address"])
+	if err != nil {
+		_ = incusClient.DeleteNetwork(ctx, incusName)
+		return nil, fmt.Errorf("incus returned an unparseable auto-assigned address: %w", err)
+	}
+
+	network := &models.ClusterNetwork{
+		ID:        id,
+		OwnerID:   ownerID,
+		Name:      defaultNetworkName,
+		IncusName: incusName,
+		CIDR:      ipnet.String(),
+		Gateway:   ip.String(),
+		Status:    string(models.ClusterNetworkStatusReady),
+		Message:   "Network created",
+	}
+
+	if err := db.Create(network).Error; err != nil {
+		_ = incusClient.DeleteNetwork(ctx, incusName)
+		return nil, fmt.Errorf("save network record: %w", err)
+	}
+
+	return network, nil
+}
 
 // NetworkHandlers handles cluster network endpoints.
 type NetworkHandlers struct {

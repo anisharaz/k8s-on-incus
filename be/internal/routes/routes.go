@@ -20,10 +20,10 @@ func SetupRoutes(app *fiber.App, jobManager *jobs.Manager, db *gorm.DB, incusCli
 	taskHandlers := handlers.NewTaskHandlers(jobManager)
 	statusHandlers := handlers.NewStatusHandlers(incusClient)
 	networkHandlers := handlers.NewNetworkHandlers(db, incusClient)
-	userHandlers := handlers.NewUserHandlers(db)
+	userHandlers := handlers.NewUserHandlers(db, jobManager, incusClient)
 	clusterHandlers := handlers.NewClusterHandlers(db, jobManager, incusClient)
 	nodeHandlers := handlers.NewNodeHandlers(db, jobManager, incusClient)
-	authHandlers := handlers.NewAuthHandlers(db, cfg.JWTSecret, cfg.CookieSecure)
+	authHandlers := handlers.NewAuthHandlers(db, cfg.JWTSecret, cfg.CookieSecure, incusClient)
 	requireAuth := middleware.RequireAuth(cfg.JWTSecret)
 
 	// Apply global middleware
@@ -56,6 +56,7 @@ func SetupRoutes(app *fiber.App, jobManager *jobs.Manager, db *gorm.DB, incusCli
 	v1.Post("/users", requireAuth, middleware.RequireAdmin, userHandlers.CreateUser)
 	v1.Get("/users", requireAuth, middleware.RequireAdmin, userHandlers.ListUsers)
 	v1.Get("/users/:id", requireAuth, middleware.RequireAdmin, userHandlers.GetUser)
+	v1.Delete("/users/:id", requireAuth, middleware.RequireAdmin, userHandlers.DeleteUser)
 
 	// Cluster network routes — every one scoped to the authenticated user.
 	v1.Post("/networks", requireAuth, networkHandlers.CreateNetwork)

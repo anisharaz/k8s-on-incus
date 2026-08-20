@@ -237,7 +237,9 @@ to show; it's the only way to distinguish first-run from steady-state.
 Creates the app's **one** admin account and immediately logs it in (sets
 the session cookie) — no separate login call needed right after. **Only
 succeeds once**, ever; concurrent first-boot requests can't both win (the
-backend row-locks the bootstrap state during the check).
+backend row-locks the bootstrap state during the check). Also creates a
+`"default"` cluster network for the new admin (see [Users](#users)'s
+`POST /api/v1/users` for the same behavior on regular users).
 
 **Request:**
 ```json
@@ -302,7 +304,12 @@ user). Regular users don't self-register; the admin creates them here.
 ### `POST /api/v1/users`
 
 Creates a regular user (`role` is always `"user"` — the one admin account
-only ever comes from `/auth/register-admin`).
+only ever comes from `/auth/register-admin`). Also creates a `"default"`
+cluster network (auto-selected CIDR) for the new user, the same as the one
+`/auth/register-admin` creates for the bootstrap admin — best-effort: if
+Incus network creation fails, the user is still created, just without a
+default network (a warning is logged server-side; the user can create one
+by hand from the Networks page).
 
 **Request:** `{ "username": "...", "password": "..." }` (same length/password rules as registering the admin)
 
@@ -318,9 +325,20 @@ only ever comes from `/auth/register-admin`).
 
 **Response `200`:** `{ "user": User }` · `404` not found · `401`/`403` as above.
 
-> There is currently no `DELETE /api/v1/users/:id` — deliberately removed.
-> Deleting users (and cascading to their owned resources, including live
-> Incus VMs/networks) is unimplemented; don't build a "delete user" UI yet.
+### `DELETE /api/v1/users/:id`
+
+Starts a background job (`type: "user_deletion"`, owned by the admin who
+triggered it — see [Jobs](#jobs)) that deletes every VM in every cluster
+the target user owns, then those clusters, then every network they own,
+and finally the user account itself. Only non-admin users can be deleted
+this way — since the caller must already be an admin, this also means an
+admin can never delete themselves or another admin through this endpoint.
+
+**Response `202`:** `{ "job": Job }` — poll `GET /api/v1/jobs/:jobId` for
+progress; `metadata.userId` identifies the target.
+
+**Errors:** `401` not logged in · `403` logged in but not admin, or target
+is an admin · `404` user not found.
 
 ---
 
@@ -794,8 +812,10 @@ error message (use `message` for that).
 
 `type` is one of `"node_provision"` (master or worker creation — check
 `metadata.role` to distinguish which), `"node_deletion"` (worker deletion —
-`metadata.nodeId`), or `"cluster_deletion"` (whole-cluster deletion —
-`metadata.clusterId`).
+`metadata.nodeId`), `"cluster_deletion"` (whole-cluster deletion —
+`metadata.clusterId`), or `"user_deletion"` (deleting a non-admin user and
+everything they own — `metadata.userId`; owned by the admin who triggered
+it, not the deleted user).
 
 **Errors:** `401` not logged in · `404` `"job not found"` — doesn't exist, or belongs to someone else.
 
