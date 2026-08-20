@@ -101,7 +101,20 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
         const data = await api.get<{ networks: ClusterNetwork[] }>(
           "/api/v1/networks",
         );
-        if (isMounted) setNetworks(data.networks ?? []);
+        if (!isMounted) return;
+        const fetchedNetworks = data.networks ?? [];
+        setNetworks(fetchedNetworks);
+
+        // Every user gets a "default" network auto-created on account
+        // creation (see be/internal/handlers/networks.go's
+        // createDefaultNetwork) — pre-select it so the common case needs
+        // no extra click, without clobbering a choice the user already made.
+        if (!form.getValues("networkId")) {
+          const defaultNetwork = fetchedNetworks.find(
+            (n) => n.name === "default",
+          );
+          if (defaultNetwork) form.setValue("networkId", defaultNetwork.id);
+        }
       } catch {
         if (isMounted) setNetworks([]);
       } finally {
@@ -112,7 +125,7 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
     return () => {
       isMounted = false;
     };
-  }, [open]);
+  }, [open, form]);
 
   async function onSubmit(values: FormValues) {
     setIsLoading(true);
