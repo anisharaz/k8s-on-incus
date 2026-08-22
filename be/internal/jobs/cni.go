@@ -61,9 +61,9 @@ func installCNI(ctx context.Context, m *Manager, incusName, cni string) error {
 // cluster), an explicit --service-cidr (kubeadm's own default, kept
 // explicit to match the chart's defaults rather than relying on kubeadm's
 // default staying the same), and --skip-phases=addon/kube-proxy since
-// OVN-Kubernetes replaces kube-proxy's functionality itself — see
-// installOVNKubernetes, which also deletes the kube-proxy DaemonSet as a
-// belt-and-suspenders step.
+// OVN-Kubernetes replaces kube-proxy's functionality itself. Confirmed
+// live this is sufficient on its own — kube-proxy is never created, so
+// installOVNKubernetes doesn't need to also delete it.
 var kubeadmInitExtraArgs = map[string][]string{
 	string(models.CNITypeCalico):        {"--pod-network-cidr=192.168.0.0/16"},
 	string(models.CNITypeFlannel):       {"--pod-network-cidr=10.244.0.0/16"},
@@ -255,11 +255,9 @@ git sparse-checkout set helm/ovn-kubernetes
 // it's a real, working, safely-installed CNI, just a materially reduced
 // one compared to Cilium/Calico/Flannel.
 //
-// kube-proxy is removed both via --skip-phases=addon/kube-proxy at kubeadm
-// init (kubeadmInitExtraArgs) and an explicit delete here — upstream's own
-// install doc is internally inconsistent about whether the skip-phases
-// flag alone is sufficient, so both are kept; the delete is a no-op
-// (--ignore-not-found) if the DaemonSet was never created.
+// kube-proxy is never installed in the first place, via
+// --skip-phases=addon/kube-proxy at kubeadm init (kubeadmInitExtraArgs) —
+// confirmed live no explicit removal is needed here.
 func installOVNKubernetes(ctx context.Context, m *Manager, incusName string) error {
 	if _, err := m.incus.Run(ctx, incusName, []string{"bash", "-c", ovnKubernetesInstallScript}); err != nil {
 		return fmt.Errorf("installing ovn-kubernetes prerequisites: %w", err)
@@ -304,14 +302,6 @@ func installOVNKubernetes(ctx context.Context, m *Manager, incusName string) err
 	}
 	if _, err := m.incus.Run(ctx, incusName, helmInstallCmd); err != nil {
 		return fmt.Errorf("helm install ovn-kubernetes: %w", err)
-	}
-
-	deleteKubeProxyCmd := []string{
-		"kubectl", "--kubeconfig=" + rootKubeconfigPath, "delete", "ds",
-		"-n", "kube-system", "kube-proxy", "--ignore-not-found",
-	}
-	if _, err := m.incus.Run(ctx, incusName, deleteKubeProxyCmd); err != nil {
-		return fmt.Errorf("removing kube-proxy: %w", err)
 	}
 
 	rolloutCmd := []string{
