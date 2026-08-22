@@ -130,5 +130,15 @@ else
     echo "VM image files not found in image — skipping import."
 fi
 
-# Keep the container alive
-sleep infinity
+# Keep the container alive. Backgrounded + waited on rather than a plain
+# foreground `sleep infinity`: bash only runs a pending trap once the
+# command it's currently waiting on returns, and a foreground `sleep
+# infinity` never does — so SIGTERM would sit ignored until Docker's
+# stop_grace_period ran out and force-killed the whole container (skipping
+# cleanup() entirely: no graceful `incus admin shutdown`, no instances
+# stopped cleanly, network bridges torn down mid-operation instead of
+# through Incus's own shutdown path). `wait` on a background job is
+# specifically interruptible by an incoming trapped signal, so the trap
+# fires immediately instead.
+sleep infinity &
+wait $!
