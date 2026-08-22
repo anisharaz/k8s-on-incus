@@ -332,7 +332,7 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
                   </Select>
                   <FormDescription>
                     {selectedCni === "ovn-kubernetes"
-                      ? "Experimental: install takes longer, needs at least 4GiB of memory, and this cluster gets pod-to-pod networking only — no external/NodePort access."
+                      ? "Experimental: install takes longer and needs at least 4GiB of memory. Pod-to-pod, ClusterIP, and NodePort/external access all work."
                       : selectedCni === "flannel"
                         ? "Lightweight and fast to install."
                         : "Fully supported, no networking caveats."}

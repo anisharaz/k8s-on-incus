@@ -244,16 +244,24 @@ cd ` + ovnKubernetesCloneDir + `
 git sparse-checkout set helm/ovn-kubernetes
 `
 
-// installOVNKubernetes is a deliberately degraded but safe install:
-// global.dummyGatewayBridge=true avoids binding the VM's real NIC into an
-// OVS bridge — the alternative (the chart's default gateway modes) would
-// mean reconfiguring the exact interface Incus's IP detection, the guest
-// agent, and every m.incus.Run call in this job depend on, with no
-// rollback path if it goes wrong mid-VM. The tradeoff: pod-to-pod
-// networking works, external/NodePort access doesn't. This is why the CNI
-// is offered as "experimental" in the UI (see allowedCNIs' comment) —
-// it's a real, working, safely-installed CNI, just a materially reduced
-// one compared to Cilium/Calico/Flannel.
+// ovnKubernetesHostInterface is the VM image's fixed network interface
+// (see the netplan config in incus_distrobuilder.yaml).
+// ovnKubernetesGatewayBridge is the OVS bridge shared-gateway-mode setup
+// creates for it — "br" + interface name is ovn-kubernetes's own fixed
+// naming convention, not something this codebase chooses.
+const (
+	ovnKubernetesHostInterface = "enp5s0"
+	ovnKubernetesGatewayBridge = "br" + ovnKubernetesHostInterface
+)
+
+// installOVNKubernetes uses the chart's own values-single-node-zone.yaml
+// defaults (gatewayMode: shared, dummyGatewayBridge: false) rather than
+// overriding to a dummy bridge — confirmed live that shared gateway mode's
+// move of the VM's IP onto the new OVS bridge doesn't break provisioning:
+// every m.incus.Run/Exec call in this job goes over the guest agent's
+// vsock channel, not the VM's network stack, so it's unaffected by the
+// bridge transition. This is the standard OVN-Kubernetes gateway mode
+// (used by every OpenShift cluster), not a risky/exotic one.
 //
 // kube-proxy is never installed in the first place, via
 // --skip-phases=addon/kube-proxy at kubeadm init (kubeadmInitExtraArgs) —
@@ -261,6 +269,22 @@ git sparse-checkout set helm/ovn-kubernetes
 func installOVNKubernetes(ctx context.Context, m *Manager, incusName string) error {
 	if _, err := m.incus.Run(ctx, incusName, []string{"bash", "-c", ovnKubernetesInstallScript}); err != nil {
 		return fmt.Errorf("installing ovn-kubernetes prerequisites: %w", err)
+	}
+
+	// Captured before the gateway bridge exists, so it reflects
+	// ovnKubernetesHostInterface's own DHCP-negotiated DNS servers — see
+	// the restore step below, after the rollout succeeds.
+	dnsCmd := []string{"resolvectl", "dns", ovnKubernetesHostInterface}
+	dnsResult, err := m.incus.Exec(ctx, incusName, dnsCmd, nil)
+	if err != nil {
+		return fmt.Errorf("reading DNS servers from %s: %w", ovnKubernetesHostInterface, err)
+	}
+	if dnsResult.ExitCode != 0 {
+		return fmt.Errorf("reading DNS servers from %s: exit %d: %s", ovnKubernetesHostInterface, dnsResult.ExitCode, dnsResult.Stdout)
+	}
+	_, dnsServers, found := strings.Cut(strings.TrimSpace(dnsResult.Stdout), ": ")
+	if !found || dnsServers == "" {
+		return fmt.Errorf("could not parse DNS servers from resolvectl output: %q", dnsResult.Stdout)
 	}
 
 	// k8sAPIServer must be the address kubeadm actually put in the
@@ -297,7 +321,6 @@ func installOVNKubernetes(ctx context.Context, m *Manager, incusName string) err
 		"--set", "k8sAPIServer=" + k8sAPIServer,
 		"--set", "global.image.repository=" + ovnKubernetesImageRepo,
 		"--set", "global.image.tag=" + ovnKubernetesImageTag,
-		"--set", "global.dummyGatewayBridge=true",
 		"--kubeconfig=" + rootKubeconfigPath,
 	}
 	if _, err := m.incus.Run(ctx, incusName, helmInstallCmd); err != nil {
@@ -310,6 +333,27 @@ func installOVNKubernetes(ctx context.Context, m *Manager, incusName string) err
 	}
 	if _, err := m.incus.Run(ctx, incusName, rolloutCmd); err != nil {
 		return fmt.Errorf("waiting for ovn-kubernetes rollout: %w", err)
+	}
+
+	// Shared gateway mode moves the VM's IP and default route from
+	// ovnKubernetesHostInterface onto ovnKubernetesGatewayBridge — confirmed
+	// live this happens cleanly, with no reachability gap for kubeadm/
+	// kubectl or this job's own incus exec calls (guest-agent vsock,
+	// unaffected either way). But systemd-resolved's DNS association
+	// doesn't follow: the bridge is created by OVN's own gateway setup,
+	// entirely outside netplan/systemd-networkd's knowledge, so it never
+	// gets the DNS server systemd-networkd's DHCP client negotiated for the
+	// original interface. Left unfixed this breaks all external DNS
+	// resolution (image pulls, external lookups) even though the pod
+	// network and control plane both work fine — restoring the DNS servers
+	// captured above, now against the bridge, closes that gap.
+	applyDNSCmd := []string{
+		"bash", "-c",
+		"resolvectl dns " + ovnKubernetesGatewayBridge + " " + dnsServers +
+			" && resolvectl default-route " + ovnKubernetesGatewayBridge + " yes",
+	}
+	if _, err := m.incus.Run(ctx, incusName, applyDNSCmd); err != nil {
+		return fmt.Errorf("restoring DNS on %s: %w", ovnKubernetesGatewayBridge, err)
 	}
 	return nil
 }

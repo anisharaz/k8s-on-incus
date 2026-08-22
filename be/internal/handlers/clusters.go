@@ -297,12 +297,16 @@ func (h *ClusterHandlers) GetKubeconfig(c fiber.Ctx) error {
 // allowedCNIs are the CNI values CreateCluster accepts. Extend this set (and
 // jobs.cniInstallers) to support another CNI later.
 //
-// OVN-Kubernetes is installed with global.dummyGatewayBridge=true (see
-// jobs.installOVNKubernetes) — pod-to-pod networking works, but external/
-// NodePort access does not, since that mode deliberately avoids binding the
-// VM's real NIC into an OVS bridge (the same NIC Incus's own IP detection
-// and guest-agent reachability depend on). It's offered as "experimental"
-// in the UI for this reason, not because it's unstable.
+// OVN-Kubernetes is installed in shared gateway mode (see
+// jobs.installOVNKubernetes) — pod-to-pod, ClusterIP, and NodePort/external
+// access all work, confirmed live including through the VM's real NIC
+// getting bound into an OVS bridge (mid-install, the IP/default route move
+// there cleanly — this app's own reachability to the VM is unaffected since
+// it goes over the guest agent's vsock channel, not the VM's network
+// stack). It's still offered as "experimental": the upstream image has no
+// stable/pinned version tag (only a floating "master" tag), and it needs
+// more moving parts and a stricter memory minimum than Cilium/Calico/
+// Flannel.
 var allowedCNIs = map[string]bool{
 	string(models.CNITypeCilium):        true,
 	string(models.CNITypeCalico):        true,

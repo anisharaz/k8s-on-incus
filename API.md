@@ -459,7 +459,7 @@ its id (see Errors).
   | `"cilium"` (default) | Fully supported. |
   | `"calico"` | Fully supported. |
   | `"flannel"` | Fully supported. Internally, `kubeadm init` is run with `--pod-network-cidr=10.244.0.0/16` for this CNI specifically — flannel's manifest hardcodes that pod CIDR; no client-visible difference. |
-  | `"ovn-kubernetes"` | **Experimental.** Installed without binding the VM's real NIC into an OVS bridge (too risky to script against the same interface the app itself depends on to reach the VM), so pod-to-pod networking works but external/NodePort access does not. |
+  | `"ovn-kubernetes"` | **Experimental.** Installed in shared gateway mode — pod-to-pod, ClusterIP, and NodePort/external access all work (confirmed live, including through the mid-install move of the VM's real NIC into an OVS bridge, which doesn't affect this app's own reachability to the VM). Still experimental because the upstream image has no stable/pinned version tag (only a floating `master` tag) and it needs more moving parts and a stricter memory minimum than the other CNIs. |
 - `cpu`, `memory`, `disk` — **all optional**, size the master's VM. Omit any
   of them (or send `0`/`""`) to use the default. If provided, each is
   checked against a minimum and the request is **rejected with `400`** if
