@@ -11,6 +11,7 @@ Click a button, get a cluster. Click another, get a worker. Grab your kubeconfig
 - **Networks with zero config** — let Incus auto-pick a free subnet, or specify your own CIDR.
 - **Kubeconfig download** — one click to grab a ready-to-use kubeconfig for any cluster.
 - **In-browser terminal** — a full xterm.js terminal into any node's shell, with multiple sessions open side by side that survive switching between them.
+- **SSH access** — every node gets a random password for its `ubuntu` user at provisioning time; click the SSH button on any running node to grab a ready-to-paste `ssh` command and password.
 - **Clean teardown** — delete a worker (drained first) or an entire cluster, VMs and all.
 - **Simple auth** — bootstrap one admin account on first run; the admin creates everyone else. Every resource is scoped to its owner.
 - **Dark mode**, a collapsible sidebar, and live status indicators, because it should feel nice to use.

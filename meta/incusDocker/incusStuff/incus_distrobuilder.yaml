@@ -78,6 +78,17 @@ files:
     content: |-
       ubuntu ALL=(ALL) NOPASSWD:ALL
 
+  # The ubuntu user has no password baked into the image — one is set
+  # randomly per-VM at provisioning time (see be/internal/jobs/node.go) and
+  # shown to the owner from the UI. Explicit rather than relying on
+  # whatever openssh-server's packaged default happens to be, since the
+  # whole feature depends on password auth actually being allowed.
+  - path: /etc/ssh/sshd_config.d/60-incus-password-auth.conf
+    generator: dump
+    mode: 0644
+    content: |-
+      PasswordAuthentication yes
+
 packages:
   manager: apt
   update: true
@@ -86,6 +97,7 @@ packages:
     - packages:
         - curl
         - openssh-client
+        - openssh-server
         - sudo
         - vim
         - ca-certificates
@@ -201,7 +213,7 @@ actions:
 
       systemctl mask swap.target
       apt-mark hold kubelet kubeadm kubectl
-      systemctl enable kubelet systemd-networkd
+      systemctl enable kubelet systemd-networkd ssh
       systemctl mask ua-auto-attach
 
       umount -l /etc/resolv.conf || true

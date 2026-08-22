@@ -57,6 +57,10 @@ export interface ClusterNode {
   status: NodeStatus;
   ip?: string;
   message?: string;
+  /** Random password set for the image's "ubuntu" user during
+   * provisioning (see be/internal/jobs/node.go). Empty if provisioning
+   * never got far enough to set it, or the SSH setup step itself failed. */
+  sshPassword?: string;
   createdAt: string;
   updatedAt: string;
 }

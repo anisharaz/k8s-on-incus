@@ -38,6 +38,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { AddNodeDialog } from "@/components/AddNodeDialog";
+import { SSHInfoDialog } from "@/components/SSHInfoDialog";
 import { api, ApiError } from "@/lib/api";
 import type {
   Cluster,
@@ -493,6 +494,7 @@ export function ClusterDetail() {
                     >
                       <TerminalIcon className="h-4 w-4" />
                     </Button>
+                    <SSHInfoDialog node={node} />
                     {node.role === "master" ? null : (
                       <AlertDialog>
                         <AlertDialogTrigger asChild>

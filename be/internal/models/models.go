@@ -197,17 +197,24 @@ const (
 // instance hostname rules (<=63 chars) and is globally unique, since it
 // lives in Incus's single namespace regardless of cluster/owner.
 type Node struct {
-	ID        string    `gorm:"primaryKey" json:"id"`
-	ClusterID string    `gorm:"column:cluster_id;index" json:"clusterId"`
-	JobID     *string   `gorm:"column:job_id" json:"jobId,omitempty"`
-	Name      string    `json:"name"`
-	IncusName string    `gorm:"column:incus_name;uniqueIndex" json:"incusName"`
-	Role      string    `gorm:"type:varchar(10)" json:"role"`
-	Status    string    `gorm:"type:varchar(20)" json:"status"`
-	IP        string    `json:"ip,omitempty"`
-	Message   string    `json:"message,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID        string  `gorm:"primaryKey" json:"id"`
+	ClusterID string  `gorm:"column:cluster_id;index" json:"clusterId"`
+	JobID     *string `gorm:"column:job_id" json:"jobId,omitempty"`
+	Name      string  `json:"name"`
+	IncusName string  `gorm:"column:incus_name;uniqueIndex" json:"incusName"`
+	Role      string  `gorm:"type:varchar(10)" json:"role"`
+	Status    string  `gorm:"type:varchar(20)" json:"status"`
+	IP        string  `json:"ip,omitempty"`
+	Message   string  `json:"message,omitempty"`
+	// SSHPassword is a random password set for the image's "ubuntu" user
+	// during provisioning (see jobs.Manager.runNodeJob), stored in plain
+	// text so it can be shown to the owner from the UI whenever they ask,
+	// not just once at creation. Empty if provisioning never got far enough
+	// to set it, or the SSH setup step itself failed (best-effort — it
+	// doesn't fail the node's provisioning job).
+	SSHPassword string    `gorm:"column:ssh_password" json:"sshPassword,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // CreateNodeRequest represents the request to add a worker node to a

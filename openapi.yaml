@@ -919,6 +919,9 @@ components:
         status: { type: string, enum: [creating, running, stopped, failed, deleting] }
         ip: { type: string, description: Empty until the provisioning job progresses far enough to know it. }
         message: { type: string }
+        sshPassword:
+          type: string
+          description: Random password set for the VM image's "ubuntu" user during provisioning (see meta/incusDocker/incusStuff/incus_distrobuilder.yaml — no password is baked into the image). Stored in plain text so it can be shown to the owner at any time. Empty if provisioning hasn't set it yet, or the best-effort SSH setup step failed. Connect with `ssh ubuntu@<ip>`.
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 

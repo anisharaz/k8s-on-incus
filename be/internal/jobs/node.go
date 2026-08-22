@@ -2,8 +2,10 @@ package jobs
 
 import (
 	"context"
+	crand "crypto/rand"
 	"fmt"
 	"log"
+	"math/big"
 	"strings"
 	"time"
 
@@ -149,6 +151,13 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 		return
 	}
 
+	m.updateJob(jobID, func(job *models.Job) {
+		job.Stage = "configuring-ssh"
+		job.Progress = 77
+		job.Message = "Setting a random SSH password..."
+	})
+	m.setupSSHPassword(ctx, jobID, nodeID, incusName)
+
 	var finalMessage string
 
 	switch role {
@@ -283,6 +292,50 @@ func (m *Manager) waitForContainerd(ctx context.Context, incusName string) error
 		case <-ticker.C:
 		}
 	}
+}
+
+// sshPasswordAlphabet deliberately excludes shell/YAML metacharacters
+// (quotes, backslashes, `$`) — the generated password is interpolated
+// directly into a shell command run inside the guest (see
+// setupSSHPassword), so restricting the character set avoids any
+// quoting/escaping question entirely rather than needing to get it right.
+const sshPasswordAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+// generateSSHPassword returns a cryptographically random password (not
+// math/rand — this is a real credential) of the given length.
+func generateSSHPassword(length int) (string, error) {
+	b := make([]byte, length)
+	for i := range b {
+		n, err := crand.Int(crand.Reader, big.NewInt(int64(len(sshPasswordAlphabet))))
+		if err != nil {
+			return "", err
+		}
+		b[i] = sshPasswordAlphabet[n.Int64()]
+	}
+	return string(b), nil
+}
+
+// setupSSHPassword sets a fresh random password for the VM image's "ubuntu"
+// user (see meta/incusDocker/incusStuff/incus_distrobuilder.yaml — no
+// password is baked into the image itself) and persists it on the node row
+// so the owner can view it from the UI at any time via an "SSH" button, not
+// just once at creation. Best-effort: SSH access is a convenience on top of
+// the browser terminal (which doesn't depend on this at all), not something
+// worth failing an otherwise-successful node provisioning job over.
+func (m *Manager) setupSSHPassword(ctx context.Context, jobID, nodeID, incusName string) {
+	password, err := generateSSHPassword(16)
+	if err != nil {
+		log.Printf("job %s: failed to generate an SSH password for %q: %v", jobID, incusName, err)
+		return
+	}
+
+	chpasswd := []string{"bash", "-c", fmt.Sprintf("echo 'ubuntu:%s' | chpasswd", password)}
+	if _, err := m.incus.Run(ctx, incusName, chpasswd); err != nil {
+		log.Printf("job %s: failed to set an SSH password on %q: %v", jobID, incusName, err)
+		return
+	}
+
+	m.updateNode(nodeID, map[string]any{"ssh_password": password})
 }
 
 // waitForClusterHealthy polls the API server's /healthz endpoint (via the

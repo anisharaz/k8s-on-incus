@@ -540,6 +540,7 @@ per-node status. `404` if the cluster doesn't exist or belongs to someone else.
       "status": "running",
       "ip": "10.44.0.192",
       "message": "Kubernetes control plane is ready",
+      "sshPassword": "aB3xQ9zM2kLpR7Tw",
       "createdAt": "2026-08-02T03:08:02.276843+05:30",
       "updatedAt": "2026-08-02T03:09:14.547593+05:30"
     },
@@ -553,6 +554,7 @@ per-node status. `404` if the cluster doesn't exist or belongs to someone else.
       "status": "running",
       "ip": "10.44.0.9",
       "message": "Node joined the cluster",
+      "sshPassword": "hN4vT8xY1qWzC6Ld",
       "createdAt": "2026-08-02T03:09:28.180597+05:30",
       "updatedAt": "2026-08-02T03:10:06.962443+05:30"
     }
@@ -564,6 +566,14 @@ per-node status. `404` if the cluster doesn't exist or belongs to someone else.
 (effectively always, immediately after the node row exists) — treat it as
 required rather than optional in the UI. `ip` and `message` are empty until
 the job progresses far enough to know them.
+
+`sshPassword` is a random password set for the VM image's `ubuntu` user
+during provisioning (no password is baked into the image itself — see
+`meta/incusDocker/incusStuff/incus_distrobuilder.yaml`), stored in plain
+text so it can be shown to the owner from the UI at any time, not just once
+at creation. Empty if provisioning never got far enough to set it, or the
+SSH setup step itself failed — it's best-effort and doesn't fail the node's
+provisioning job. Connect with `ssh ubuntu@<ip>`.
 
 > There is no `GET /api/v1/nodes/:id` (single node) yet — always fetch
 > nodes through this cluster-scoped list.
