@@ -16,7 +16,8 @@ import (
 // nodeProvisionTimeout bounds how long a single node's VM launch and (for a
 // master) kubeadm init are allowed to take. Generous because kubeadm may
 // need to pull control-plane images on first run, and a master additionally
-// downloads the Cilium CLI and pulls Cilium's own images during CNI install.
+// installs and waits on its CNI (see jobs/cni.go) — CLI/chart downloads and
+// the CNI's own image pulls all happen live, not pre-baked into the VM.
 const nodeProvisionTimeout = 20 * time.Minute
 
 // nodeDeleteVMTimeout bounds the best-effort VM cleanup failNodeJob performs
@@ -169,7 +170,7 @@ func (m *Manager) runNodeJob(jobID, nodeID, incusName, networkIncusName, role, m
 		})
 		m.updateNode(nodeID, map[string]any{"message": "Running kubeadm init"})
 
-		if _, err := m.incus.Run(ctx, incusName, []string{"kubeadm", "init"}); err != nil {
+		if _, err := m.incus.Run(ctx, incusName, kubeadmInitArgs(cni)); err != nil {
 			m.failNodeJob(jobID, nodeID, incusName, err)
 			return
 		}

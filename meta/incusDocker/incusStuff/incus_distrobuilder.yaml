@@ -108,6 +108,14 @@ packages:
         - systemd-timesyncd
         - cloud-init
         - fuse3
+        # git + openvswitch-switch: only the ovn-kubernetes CNI installer
+        # (be/internal/jobs/cni.go) needs these, but they're baked into the
+        # shared image rather than apt-installed live at cluster-creation
+        # time — same "pre-bake what won't change often" reasoning as
+        # kubeadm's own control-plane images below. Harmless for every
+        # other CNI, which never touches either package.
+        - git
+        - openvswitch-switch
       action: install
 
     - packages:

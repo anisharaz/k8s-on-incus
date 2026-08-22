@@ -169,7 +169,7 @@ User
 UserRole             = "admin" | "user"
 ClusterNetworkStatus = "creating" | "ready" | "failed"
 ClusterStatus        = "creating" | "ready" | "failed" | "deleting"
-CNIType               = "cilium"  // the only implemented value today; more may be added later
+CNIType               = "cilium" | "calico" | "flannel" | "ovn-kubernetes"  // "ovn-kubernetes" is experimental, see the cni field docs below
 NodeRole              = "master" | "worker"
 NodeStatus            = "creating" | "running" | "stopped" | "failed" | "deleting"  // "stopped" defined but not yet used
 JobStatus             = "queued" | "running" | "succeeded" | "failed"
@@ -448,11 +448,18 @@ its id (see Errors).
 
 - `name` — free-form, 1–63 chars, unique **per owner**.
 - `cni` — **optional**, the pod networking plugin the master installs after
-  `kubeadm init`. Defaults to `"cilium"` if omitted/empty. `"cilium"` is
-  currently the **only allowed value** — any other value is **rejected with
-  `400`**, listing the allowed set in the message. The request/response
-  shape is deliberately unchanged by this restriction, so adding more CNIs
-  later won't require an API version bump.
+  `kubeadm init`. Defaults to `"cilium"` if omitted/empty. Any value outside
+  `CNIType`'s allowed set is **rejected with `400`**, listing the allowed
+  values in the message. The request/response shape is deliberately
+  unchanged regardless of which CNIs are supported, so adding more later
+  never requires an API version bump.
+
+  | Value | Notes |
+  |---|---|
+  | `"cilium"` (default) | Fully supported. |
+  | `"calico"` | Fully supported. |
+  | `"flannel"` | Fully supported. Internally, `kubeadm init` is run with `--pod-network-cidr=10.244.0.0/16` for this CNI specifically — flannel's manifest hardcodes that pod CIDR; no client-visible difference. |
+  | `"ovn-kubernetes"` | **Experimental.** Installed without binding the VM's real NIC into an OVS bridge (too risky to script against the same interface the app itself depends on to reach the VM), so pod-to-pod networking works but external/NodePort access does not. |
 - `cpu`, `memory`, `disk` — **all optional**, size the master's VM. Omit any
   of them (or send `0`/`""`) to use the default. If provided, each is
   checked against a minimum and the request is **rejected with `400`** if

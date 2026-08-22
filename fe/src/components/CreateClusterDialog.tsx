@@ -273,12 +273,21 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
                         <SelectValue placeholder="Select a CNI" />
                       </SelectTrigger>
                     </FormControl>
-                    <SelectContent>
+                    <SelectContent position="popper">
                       <SelectItem value="cilium">Cilium</SelectItem>
+                      <SelectItem value="calico">Calico</SelectItem>
+                      <SelectItem value="flannel">Flannel</SelectItem>
+                      <SelectItem value="ovn-kubernetes">
+                        OVN-Kubernetes (experimental)
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                   <FormDescription>
-                    Cilium is currently the only supported CNI.
+                    {field.value === "ovn-kubernetes"
+                      ? "Experimental: install takes longer, and this cluster gets pod-to-pod networking only — no external/NodePort access."
+                      : field.value === "flannel"
+                        ? "Lightweight and fast to install."
+                        : "Fully supported, no networking caveats."}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

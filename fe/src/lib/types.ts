@@ -27,8 +27,10 @@ export interface ClusterNetwork {
 
 export type ClusterStatus = "creating" | "ready" | "failed" | "deleting";
 
-// The only implemented value today; more may be added later.
-export type CNIType = "cilium";
+// See API.md's CNI section for install-time caveats per value —
+// "ovn-kubernetes" in particular is experimental (pod-to-pod networking
+// only, no external/NodePort access).
+export type CNIType = "cilium" | "calico" | "flannel" | "ovn-kubernetes";
 
 export interface Cluster {
   id: string;

@@ -855,9 +855,9 @@ components:
           description: Free-form, unique per owner.
         cni:
           type: string
-          enum: [cilium]
+          enum: [cilium, calico, flannel, ovn-kubernetes]
           default: cilium
-          description: Pod networking plugin installed after kubeadm init. "cilium" is currently the only allowed value.
+          description: Pod networking plugin installed after kubeadm init. "ovn-kubernetes" is experimental — it's installed without binding the VM's real NIC into an OVS bridge, so pod-to-pod networking works but external/NodePort access does not.
         cpu:
           type: integer
           minimum: 2
@@ -885,7 +885,7 @@ components:
           nullable: true
           description: Present only while a DELETE is in progress. Not used for creation (see the master Node's jobId for that).
         name: { type: string }
-        cni: { type: string, enum: [cilium] }
+        cni: { type: string, enum: [cilium, calico, flannel, ovn-kubernetes] }
         status: { type: string, enum: [creating, ready, failed, deleting] }
         message: { type: string }
         createdAt: { type: string, format: date-time }

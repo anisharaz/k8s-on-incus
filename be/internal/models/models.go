@@ -122,11 +122,17 @@ const (
 // CNIType is the pod networking plugin a cluster's master installs after
 // kubeadm init. Adding a new one: add a constant here, add it to
 // handlers.allowedCNIs, and add an installer to jobs.cniInstallers
-// (internal/jobs/cni.go) — no other control flow changes.
+// (internal/jobs/cni.go). Most CNIs need no other control-flow changes;
+// the one exception is a CNI whose manifest requires a specific
+// `kubeadm init` flag (see jobs.kubeadmInitExtraArgs) — currently Flannel
+// and OVN-Kubernetes.
 type CNIType string
 
 const (
-	CNITypeCilium CNIType = "cilium"
+	CNITypeCilium        CNIType = "cilium"
+	CNITypeCalico        CNIType = "calico"
+	CNITypeFlannel       CNIType = "flannel"
+	CNITypeOVNKubernetes CNIType = "ovn-kubernetes"
 )
 
 // Cluster represents a Kubernetes cluster: a named group of nodes (one
@@ -150,9 +156,9 @@ type Cluster struct {
 // a cluster launches its master node's VM sized to CPU/Memory/Disk (each
 // optional — omitted or zero-value falls back to the minimum). Memory and
 // Disk use Incus's size format (e.g. "2GiB", "20GiB"). Cni is optional and
-// defaults to CNITypeCilium, currently the only allowed value. The owner is
-// the authenticated session's user, not a body field; networkId must
-// reference a network that owner also owns.
+// defaults to CNITypeCilium; see handlers.allowedCNIs for the full set of
+// accepted values. The owner is the authenticated session's user, not a
+// body field; networkId must reference a network that owner also owns.
 type CreateClusterRequest struct {
 	NetworkID string `json:"networkId"`
 	Name      string `json:"name"`
