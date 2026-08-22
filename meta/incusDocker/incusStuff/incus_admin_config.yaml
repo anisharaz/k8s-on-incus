@@ -1,6 +1,6 @@
 config:
   # Listen on all interfaces (HTTPS on port 8443)
-  core.https_address: ":8443"
+  core.https_address: ""
 
   # Keep downloaded images up to date
   images.auto_update_interval: "6"

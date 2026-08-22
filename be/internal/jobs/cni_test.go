@@ -13,7 +13,7 @@ func TestKubeadmInitArgs(t *testing.T) {
 		want []string
 	}{
 		{string(models.CNITypeCilium), []string{"kubeadm", "init"}},
-		{string(models.CNITypeCalico), []string{"kubeadm", "init"}},
+		{string(models.CNITypeCalico), []string{"kubeadm", "init", "--pod-network-cidr=192.168.0.0/16"}},
 		{string(models.CNITypeFlannel), []string{"kubeadm", "init", "--pod-network-cidr=10.244.0.0/16"}},
 		{
 			string(models.CNITypeOVNKubernetes),

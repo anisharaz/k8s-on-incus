@@ -34,24 +34,38 @@ func installCNI(ctx context.Context, m *Manager, incusName, cni string) error {
 
 // kubeadmInitExtraArgs are additional flags runNodeJob must pass to
 // `kubeadm init` for a given CNI, beyond the plain, CNI-agnostic
-// invocation. Most CNIs (Cilium, Calico) manage their own IPAM and don't
-// need kubeadm to allocate a specific per-node pod CIDR, so they get no
-// entry here — a missing map key means "no extra args" (see
-// kubeadmInitArgs).
+// invocation. Cilium manages its own IPAM without needing kubeadm to
+// allocate a per-node pod CIDR, so it gets no entry here — a missing map
+// key means "no extra args" (see kubeadmInitArgs).
 //
 // Flannel's stock manifest hardcodes pod CIDR 10.244.0.0/16, which only
 // works if kube-controller-manager was told to allocate that same CIDR to
 // each node — which kubeadm only does when --pod-network-cidr is passed at
 // init time.
 //
-// OVN-Kubernetes needs three flags: the same --pod-network-cidr (its chart
-// defaults expect it too), an explicit --service-cidr (kubeadm's own
-// default, kept explicit to match the chart's defaults rather than relying
-// on kubeadm's default staying the same), and --skip-phases=addon/kube-proxy
-// since OVN-Kubernetes replaces kube-proxy's functionality itself — see
+// Calico's operator-based install (installCalico) also needs this,
+// contrary to Tigera's own docs suggesting otherwise: the operator reads
+// kubeadm's own kubeadm-config ConfigMap to auto-detect the pod CIDR, and
+// if `--pod-network-cidr` was never passed to `kubeadm init`, that
+// ConfigMap has no podSubnet field at all — confirmed live, the
+// "ippools" TigeraStatus component gets permanently stuck with "error
+// filling IP pool defaults: kubeadm configuration is missing required
+// podSubnet field" rather than falling back to any default. Using
+// 192.168.0.0/16 here — Calico's own documented default IP pool CIDR — so
+// nothing else about the stock custom-resources.yaml manifest needs
+// customizing to match.
+//
+// OVN-Kubernetes needs three flags: the same style of --pod-network-cidr
+// (its chart defaults expect it too, using the same 10.244.0.0/16 as
+// Flannel — the two never coexist since only one CNI installs per
+// cluster), an explicit --service-cidr (kubeadm's own default, kept
+// explicit to match the chart's defaults rather than relying on kubeadm's
+// default staying the same), and --skip-phases=addon/kube-proxy since
+// OVN-Kubernetes replaces kube-proxy's functionality itself — see
 // installOVNKubernetes, which also deletes the kube-proxy DaemonSet as a
 // belt-and-suspenders step.
 var kubeadmInitExtraArgs = map[string][]string{
+	string(models.CNITypeCalico):        {"--pod-network-cidr=192.168.0.0/16"},
 	string(models.CNITypeFlannel):       {"--pod-network-cidr=10.244.0.0/16"},
 	string(models.CNITypeOVNKubernetes): {"--pod-network-cidr=10.244.0.0/16", "--service-cidr=10.96.0.0/16", "--skip-phases=addon/kube-proxy"},
 }
@@ -212,13 +226,22 @@ const ovnKubernetesImageRepo = "ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-u
 // Cilium's own "curl a small tool binary at cluster time" pattern — unlike
 // git/openvswitch-switch, its own install script already tracks upstream
 // releases without needing this codebase to pin anything.
+// A pre-installer version of this script used to run `ovs-vsctl add-br
+// br-int` here to pre-create the integration bridge. That was removed:
+// confirmed live it's actively harmful now that the host OVS
+// daemons are masked (see incus_distrobuilder.yaml) — `ovs-vsctl` hangs
+// forever with no ovsdb-server to talk to. It was also never useful even
+// when the host daemons WERE running: it writes to the host package's own
+// database (/etc/openvswitch), while the ovs-node DaemonSet's containerized
+// OVS daemon uses a completely separate one (/etc/origin/openvswitch) and
+// creates br-int itself — confirmed live, ovs-node's own logs show it
+// creating br-int/br-ex on its own once the host daemons are out of its way.
 const ovnKubernetesInstallScript = `set -euo pipefail
 curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 rm -rf ` + ovnKubernetesCloneDir + `
 git clone --depth 1 --filter=blob:none --sparse https://github.com/ovn-kubernetes/ovn-kubernetes.git ` + ovnKubernetesCloneDir + `
 cd ` + ovnKubernetesCloneDir + `
 git sparse-checkout set helm/ovn-kubernetes
-ovs-vsctl add-br br-int
 `
 
 // installOVNKubernetes is a deliberately degraded but safe install:
@@ -242,11 +265,38 @@ func installOVNKubernetes(ctx context.Context, m *Manager, incusName string) err
 		return fmt.Errorf("installing ovn-kubernetes prerequisites: %w", err)
 	}
 
+	// k8sAPIServer must be the address kubeadm actually put in the
+	// apiserver's serving certificate SANs (the node's real IP plus the
+	// service cluster IP) — confirmed live that kubeadm's default cert does
+	// NOT include 127.0.0.1/localhost. Hardcoding 127.0.0.1 here previously
+	// meant every ovn-kubernetes component dialing the apiserver got a TLS
+	// verification error ("certificate is valid for 10.96.0.1, <node-ip>,
+	// not 127.0.0.1"), which for ovnkube-identity specifically meant its
+	// node informer cache never synced, which in turn meant its admission
+	// webhook HTTP server never started listening on :9443 at all — every
+	// kubelet node-status PATCH then failed webhook validation with
+	// "connection refused", leaving the node stuck NotReady forever even
+	// though the individual pods were actually running. Reading the address
+	// straight out of the kubeconfig kubeadm already generated avoids
+	// hardcoding it a second time somewhere it can drift out of sync.
+	apiServerCmd := []string{
+		"kubectl", "--kubeconfig=" + rootKubeconfigPath, "config", "view",
+		"--minify", "-o", "jsonpath={.clusters[0].cluster.server}",
+	}
+	apiServerResult, err := m.incus.Exec(ctx, incusName, apiServerCmd, nil)
+	if err != nil {
+		return fmt.Errorf("reading kube-apiserver address from kubeconfig: %w", err)
+	}
+	if apiServerResult.ExitCode != 0 {
+		return fmt.Errorf("reading kube-apiserver address from kubeconfig: exit %d: %s", apiServerResult.ExitCode, apiServerResult.Stdout)
+	}
+	k8sAPIServer := strings.TrimSpace(apiServerResult.Stdout)
+
 	helmInstallCmd := []string{
 		"helm", "install", "ovn-kubernetes",
 		ovnKubernetesCloneDir + "/helm/ovn-kubernetes",
 		"-f", ovnKubernetesCloneDir + "/helm/ovn-kubernetes/values-single-node-zone.yaml",
-		"--set", "k8sAPIServer=https://127.0.0.1:6443",
+		"--set", "k8sAPIServer=" + k8sAPIServer,
 		"--set", "global.image.repository=" + ovnKubernetesImageRepo,
 		"--set", "global.image.tag=" + ovnKubernetesImageTag,
 		"--set", "global.dummyGatewayBridge=true",

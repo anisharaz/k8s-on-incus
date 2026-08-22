@@ -39,6 +39,25 @@ const (
 // is a hard cutoff, so sitting exactly on the minimum risks failing it.
 const defaultNodeMemory = "2GiB"
 
+// minNodeMemoryOVNKubernetes overrides minNodeMemory (and defaultNodeMemory)
+// for CNITypeOVNKubernetes. Confirmed live: at the plain 2GiB default, the
+// ovnkube-node DaemonSet pod (6 containers) plus the rest of the control
+// plane leaves the node with insufficient allocatable memory to schedule
+// it at all ("0/1 nodes are available: 1 Insufficient memory"), on every
+// node the DaemonSet lands on — not just the master — so this applies to
+// both CreateCluster and AddNode. Unlike minNodeMemory (a kubeadm hard
+// preflight cutoff, so defaultNodeMemory sits deliberately above it), 4GiB
+// is a scheduling-headroom figure, not a hard cutoff, so the default can
+// equal the minimum here.
+const minNodeMemoryOVNKubernetes = "4GiB"
+
+// cniMinNodeMemory holds per-CNI memory minimums stricter than
+// minNodeMemory. A CNI with no entry here uses minNodeMemory/
+// defaultNodeMemory unchanged.
+var cniMinNodeMemory = map[string]string{
+	string(models.CNITypeOVNKubernetes): minNodeMemoryOVNKubernetes,
+}
+
 // ClusterHandlers handles cluster endpoints.
 type ClusterHandlers struct {
 	db      *gorm.DB
@@ -95,7 +114,7 @@ func (h *ClusterHandlers) CreateCluster(c fiber.Ctx) error {
 		})
 	}
 
-	size, err := validateNodeSize(req.CPU, req.Memory, req.Disk)
+	size, err := validateNodeSize(req.CPU, req.Memory, req.Disk, cni)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
 			Error:   "validation error",
@@ -391,18 +410,25 @@ func (h *ClusterHandlers) DeleteCluster(c fiber.Ctx) error {
 }
 
 // validateNodeSize applies the minimum to any unset field (cpu == 0 or
-// memory/disk == "") and rejects anything explicitly set below it.
-func validateNodeSize(cpu int, memory, disk string) (jobs.NodeSize, error) {
+// memory/disk == "") and rejects anything explicitly set below it. cni
+// selects a stricter memory minimum/default when one is registered in
+// cniMinNodeMemory.
+func validateNodeSize(cpu int, memory, disk, cni string) (jobs.NodeSize, error) {
 	if cpu == 0 {
 		cpu = minNodeCPU
 	} else if cpu < minNodeCPU {
 		return jobs.NodeSize{}, fmt.Errorf("cpu must be at least %d, got %d", minNodeCPU, cpu)
 	}
 
+	minMemory, defaultMemory := minNodeMemory, defaultNodeMemory
+	if m, ok := cniMinNodeMemory[cni]; ok {
+		minMemory, defaultMemory = m, m
+	}
+
 	memory = strings.TrimSpace(memory)
 	if memory == "" {
-		memory = defaultNodeMemory
-	} else if err := checkMinByteSize("memory", memory, minNodeMemory); err != nil {
+		memory = defaultMemory
+	} else if err := checkMinByteSize("memory", memory, minMemory); err != nil {
 		return jobs.NodeSize{}, err
 	}
 

@@ -224,6 +224,25 @@ actions:
       systemctl enable kubelet systemd-networkd ssh
       systemctl mask ua-auto-attach
 
+      # openvswitch-switch's own postinst auto-enables+starts systemd
+      # units that own the host's default OVS paths (/etc/openvswitch,
+      # /var/run/openvswitch/db.sock). This directly conflicts with the
+      # ovn-kubernetes CNI's own containerized OVS daemon (the ovs-node
+      # DaemonSet, which uses its own separate state dir,
+      # /etc/origin/openvswitch) — confirmed live, leaving it stuck
+      # logging "Another process is currently managing OVS, waiting 10s
+      # ..." forever.
+      #
+      # Masking just the umbrella openvswitch-switch.service is NOT
+      # enough — confirmed live: ovs-record-hostname.service is enabled
+      # independently of it and pulls in ovsdb-server.service on its own,
+      # starting the OVS database (but not ovs-vswitchd) at boot
+      # regardless. All three are masked here so nothing can start any
+      # part of the host OVS stack, by any path; the ovn-kubernetes
+      # installer (be/internal/jobs/cni.go) only needs the ovs-vsctl CLI
+      # tool the package provides, not any of these services.
+      systemctl mask openvswitch-switch ovsdb-server ovs-vswitchd ovs-record-hostname
+
       umount -l /etc/resolv.conf || true
       rm -f /etc/resolv.conf
       ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf

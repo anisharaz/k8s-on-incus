@@ -39,32 +39,75 @@ import type { Cluster, ClusterNetwork } from "@/lib/types";
 
 const sizeRegex = /^\d+(B|kB|MB|GB|TB|PB|EB|KiB|MiB|GiB|TiB|PiB|EiB)$/;
 
-const formSchema = z.object({
-  name: z
-    .string()
-    .min(1, "Name is required")
-    .max(63, "Name must be at most 63 characters"),
-  networkId: z.string().min(1, "Select a network"),
-  cni: z.string().min(1, "Select a CNI"),
-  cpu: z
-    .string()
-    .optional()
-    .refine((v) => !v || (/^\d+$/.test(v) && Number(v) >= 2), {
-      message: "Must be a whole number, at least 2",
-    }),
-  memory: z
-    .string()
-    .optional()
-    .refine((v) => !v || sizeRegex.test(v), {
-      message: 'Must look like "2GiB" or "1700MB"',
-    }),
-  disk: z
-    .string()
-    .optional()
-    .refine((v) => !v || sizeRegex.test(v), {
-      message: 'Must look like "20GiB"',
-    }),
-});
+const byteUnitMultipliers: Record<string, number> = {
+  B: 1,
+  kB: 1000,
+  MB: 1000 ** 2,
+  GB: 1000 ** 3,
+  TB: 1000 ** 4,
+  PB: 1000 ** 5,
+  EB: 1000 ** 6,
+  KiB: 1024,
+  MiB: 1024 ** 2,
+  GiB: 1024 ** 3,
+  TiB: 1024 ** 4,
+  PiB: 1024 ** 5,
+  EiB: 1024 ** 6,
+};
+
+// Only called after sizeRegex has already validated the string, so the
+// match is guaranteed here.
+function parseByteSize(value: string): number {
+  const match = value.match(/^(\d+)(\D+)$/)!;
+  return Number(match[1]) * byteUnitMultipliers[match[2]];
+}
+
+// Mirrors be/internal/handlers/clusters.go's minNodeMemoryOVNKubernetes:
+// ovn-kubernetes's ovnkube-node DaemonSet pod plus the rest of the control
+// plane doesn't fit in the plain 2GiB default, so the backend enforces a
+// stricter floor for this one CNI specifically.
+const minMemoryBytesByCni: Record<string, number> = {
+  "ovn-kubernetes": 4 * 1024 ** 3,
+};
+
+const formSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1, "Name is required")
+      .max(63, "Name must be at most 63 characters"),
+    networkId: z.string().min(1, "Select a network"),
+    cni: z.string().min(1, "Select a CNI"),
+    cpu: z
+      .string()
+      .optional()
+      .refine((v) => !v || (/^\d+$/.test(v) && Number(v) >= 2), {
+        message: "Must be a whole number, at least 2",
+      }),
+    memory: z
+      .string()
+      .optional()
+      .refine((v) => !v || sizeRegex.test(v), {
+        message: 'Must look like "2GiB" or "1700MB"',
+      }),
+    disk: z
+      .string()
+      .optional()
+      .refine((v) => !v || sizeRegex.test(v), {
+        message: 'Must look like "20GiB"',
+      }),
+  })
+  .refine(
+    (values) => {
+      const minBytes = minMemoryBytesByCni[values.cni];
+      if (!minBytes || !values.memory) return true;
+      return parseByteSize(values.memory) >= minBytes;
+    },
+    {
+      message: "ovn-kubernetes needs at least 4GiB of memory",
+      path: ["memory"],
+    },
+  );
 
 type FormValues = z.infer<typeof formSchema>;
 
@@ -77,6 +120,7 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [selectedCni, setSelectedCni] = useState("cilium");
   const [networks, setNetworks] = useState<ClusterNetwork[]>([]);
   const [networksLoading, setNetworksLoading] = useState(false);
 
@@ -162,6 +206,7 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
         if (!next) {
           form.reset();
           setShowAdvanced(false);
+          setSelectedCni("cilium");
         }
       }}
     >
@@ -264,7 +309,10 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
                 <FormItem>
                   <FormLabel>CNI</FormLabel>
                   <Select
-                    onValueChange={field.onChange}
+                    onValueChange={(value) => {
+                      field.onChange(value);
+                      setSelectedCni(value);
+                    }}
                     value={field.value}
                     disabled={isLoading}
                   >
@@ -283,9 +331,9 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
                     </SelectContent>
                   </Select>
                   <FormDescription>
-                    {field.value === "ovn-kubernetes"
-                      ? "Experimental: install takes longer, and this cluster gets pod-to-pod networking only — no external/NodePort access."
-                      : field.value === "flannel"
+                    {selectedCni === "ovn-kubernetes"
+                      ? "Experimental: install takes longer, needs at least 4GiB of memory, and this cluster gets pod-to-pod networking only — no external/NodePort access."
+                      : selectedCni === "flannel"
                         ? "Lightweight and fast to install."
                         : "Fully supported, no networking caveats."}
                   </FormDescription>
@@ -343,7 +391,9 @@ export function CreateClusterDialog({ onSuccess }: CreateClusterDialogProps) {
                         />
                       </FormControl>
                       <FormDescription>
-                        Default 2 GiB, minimum 1700 MB.
+                        {selectedCni === "ovn-kubernetes"
+                          ? "ovn-kubernetes needs at least 4 GiB; default 4 GiB."
+                          : "Default 2 GiB, minimum 1700 MB."}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

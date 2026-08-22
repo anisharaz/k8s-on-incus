@@ -857,7 +857,7 @@ components:
           type: string
           enum: [cilium, calico, flannel, ovn-kubernetes]
           default: cilium
-          description: Pod networking plugin installed after kubeadm init. "ovn-kubernetes" is experimental — it's installed without binding the VM's real NIC into an OVS bridge, so pod-to-pod networking works but external/NodePort access does not.
+          description: Pod networking plugin installed after kubeadm init. "ovn-kubernetes" is experimental — it's installed without binding the VM's real NIC into an OVS bridge, so pod-to-pod networking works but external/NodePort access does not. It also raises the memory default/minimum below to 4GiB (see memory).
         cpu:
           type: integer
           minimum: 2
@@ -866,7 +866,7 @@ components:
         memory:
           type: string
           default: "2GiB"
-          description: 'Incus size-string format (e.g. "2GiB"). Minimum 1700MB (kubeadm preflight).'
+          description: 'Incus size-string format (e.g. "2GiB"). Minimum 1700MB (kubeadm preflight); default/minimum is 4GiB when cni is "ovn-kubernetes" (its ovnkube-node DaemonSet pod doesn''t fit in a plain 2GiB node).'
         disk:
           type: string
           default: "20GiB"

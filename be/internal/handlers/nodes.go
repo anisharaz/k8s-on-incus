@@ -138,7 +138,7 @@ func (h *NodeHandlers) CreateNode(c fiber.Ctx) error {
 		}
 	}
 
-	size, err := validateNodeSize(req.CPU, req.Memory, req.Disk)
+	size, err := validateNodeSize(req.CPU, req.Memory, req.Disk, cluster.CNI)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
 			Error:   "validation error",

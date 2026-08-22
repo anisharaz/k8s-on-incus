@@ -468,7 +468,7 @@ its id (see Errors).
   | Field | Type | Default | Minimum | Why |
   |---|---|---|---|---|
   | `cpu` | int (vCPUs) | `2` | `2` | kubeadm's own hard preflight check |
-  | `memory` | string, [Incus size format](#size-string-format) | `"2GiB"` | `1700MB` | kubeadm's own hard preflight check (default is intentionally above the bare minimum — see note below) |
+  | `memory` | string, [Incus size format](#size-string-format) | `"2GiB"` (`"4GiB"` for `cni: "ovn-kubernetes"`) | `1700MB` (`4GiB` for `cni: "ovn-kubernetes"`) | kubeadm's own hard preflight check (default is intentionally above the bare minimum — see note below) |
   | `disk` | string, [Incus size format](#size-string-format) | `"20GiB"` | `20GiB` | not kubeadm-enforced; this app's own floor for etcd + images |
 
   Note: the memory *default* (`2GiB`) is deliberately above the *minimum*
@@ -477,6 +477,14 @@ its id (see Errors).
   exactly on the minimum risks failing it. If a user explicitly requests
   something between `1700MB` and `2GiB`, that's allowed (it passed the
   minimum); the risk only applies to the auto-default.
+
+  `cni: "ovn-kubernetes"` raises both the memory default and minimum to
+  `4GiB` — confirmed live that the `ovnkube-node` DaemonSet pod (6
+  containers) plus the rest of the control plane doesn't fit in a plain
+  2GiB node, leaving it permanently unschedulable
+  ("`0/1 nodes are available: 1 Insufficient memory`"). This applies to
+  worker nodes too (see `POST /api/v1/clusters/:id/nodes` below), since
+  `ovnkube-node` runs on every node, not just the master.
 
 **Response `202`:**
 ```json
